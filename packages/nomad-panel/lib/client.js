@@ -310,6 +310,16 @@ window.__ModuleLoader__.load({
 					"Health",
 					`通过 ${summary.pass ?? 0} · 警告 ${summary.warn ?? 0} · 失败 ${summary.fail ?? 0} · 跳过 ${summary.skip ?? 0}`,
 				));
+				// Skills 数据段（Phase 3.2 状态端点扩展）：只显示数量与有效项名称；
+				// 无效/被忽略项的修复指引由 doctor 的 skills 巡检项承担（health.results 可见）。
+				if (data.skills !== undefined && data.skills !== null) {
+					const sk = data.skills;
+					let skillsText = `有效 ${sk.valid ?? 0} / 已装 ${sk.total ?? 0}`;
+					if (Array.isArray(sk.items) && sk.items.length > 0) {
+						skillsText += "：" + sk.items.map(function (s) { return s.name; }).join(", ");
+					}
+					rows.push(row("Skills", skillsText));
+				}
 				rows.push(row("Build", buildId === undefined ? "—" : buildId));
 				return rows;
 			};

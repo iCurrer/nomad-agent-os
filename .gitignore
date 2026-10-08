@@ -13,13 +13,15 @@ vendor/
 # ---- Nomad: 用户数据永不进版本库 ----
 # data/     = 会话 / 事件 / 记忆 / 日志 / 备份 / 运行态（含带 token 的 state 文件）
 # workspace/= Agent 工作区与沙箱
-# skills/ profiles/ mcp/ = 用户的技能 / 档案 / MCP 配置（盘上长期存在，但不入库）
+# /skills/ /profiles/ /mcp/ = 用户的技能 / 档案 / MCP 配置（盘上长期存在，但不入库）。
+#   ⚠ 必须带前导 `/` 锚定盘根：无锚定的 `skills/` 会误伤任意深度的同名目录
+#   （实际事故：docs/examples/skills/ 里的随盘示例被吞掉，2026-10-09）。
 data/
 workspace/
-skills/
-profiles/
-mcp/
-logs/
+/skills/
+/profiles/
+/mcp/
+/logs/
 *.log
 
 # ---- Secret：任何形式的明文密钥都禁止入库 ----

@@ -25,6 +25,7 @@ const path = require('node:path')
 
 const { runDoctor } = require('./doctor.js')
 const { readState } = require('./state.js')
+const { listSkills } = require('./skills.js')
 
 /** 状态端点返回的 state 字段白名单（其余一律丢弃，尤其带 token 的 `url`）。 */
 const STATE_WHITELIST = [
@@ -79,7 +80,41 @@ function readVersionFile(root) {
 }
 
 /**
- * 组装一次完整状态 JSON（身份 + 运行态 + 健康度，三类合一）。
+ * 组装 skills 数据段（5-B 数据面扩展，Phase 3.2）。
+ *
+ * 只挑面板展示所需的最小字段：数量 + 有效 skill 的名称/描述（描述截断到 120 字符，
+ * 避免个别长描述把 5s 轮询的 payload 撑大）。无效项只报数量 —— 修复指引由
+ * doctor 的 skills 巡检项（面板 health.results 里现成可见）承担，不在这里重复。
+ *
+ * @param {object} config - 已加载配置
+ * @returns {{ base: string, exists: boolean, total: number, valid: number, items: object[], ignored: number, invalid: number }} 摘要
+ */
+function buildSkillsSummary(config) {
+  const scan = listSkills({ config })
+  const items = []
+  for (const item of scan.skills) {
+    if (item.problems.length > 0 || item.skill === null) continue
+    items.push({
+      name: item.skill.name,
+      format: item.kind,
+      description: item.skill.description.length > 120
+        ? `${item.skill.description.slice(0, 120)}…`
+        : item.skill.description,
+    })
+  }
+  return {
+    base: scan.base,
+    exists: scan.exists,
+    total: scan.skills.length,
+    valid: items.length,
+    invalid: scan.skills.length - items.length,
+    ignored: scan.ignored.length,
+    items,
+  }
+}
+
+/**
+ * 组装一次完整状态 JSON（身份 + 运行态 + 健康度 + Skills，四类合一）。
  *
  * 健康度每次请求现算（runDoctor 本就是「每次调用现算」），天然适配面板低频刷新。
  * @param {{ root: string, source: string, config: object, runtime: object }} options - 上下文
@@ -93,6 +128,7 @@ async function collectStatus(options) {
     generatedAt: new Date().toISOString(),
     identity: readVersionFile(root),
     state: sanitizeState(readState(root)),
+    skills: buildSkillsSummary(config),
     health: {
       summary: doctor.summary,
       results: doctor.results,

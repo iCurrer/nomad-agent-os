@@ -22,6 +22,9 @@
  *   nomad profile list         列出盘内全部 profile
  *   nomad profile create <name> [--template T]   从内置模板创建骨架
  *   nomad profile validate <name>                深度校验单个 profile
+ *   nomad skill list           列出已安装 skill（user-dsh 根：data/dsh-home/skills/）
+ *   nomad skill add <path>     安装本地 skill（目录束或 .md 文件；不碰网络下载）
+ *   nomad skill remove <name>  卸载 skill（装/删均热生效，无需重启实例）
  *   nomad start [--profile <name>]   覆盖本次启动使用的 profile（默认仍 nomad）
  *   nomad logs [--raw] [--lines N]
  *   nomad url                  打印带 token 的访问地址（敏感）
@@ -48,6 +51,7 @@ const { buildEnv, describePlan } = require('./lib/env.js')
 const { redactEnv, localDate } = require('./lib/logger.js')
 const { ensureDirs, buildArgv } = require('./lib/bootstrap.js')
 const { ensureNomadProfile, inspectNomadProfile, listProfiles, createProfile, validateProfileDir, validateProfileName } = require('./lib/profile.js')
+const { listSkills, addSkill, removeSkill, skillsDir } = require('./lib/skills.js')
 const { readState, clearState, isAlive, isFresh, stateFile } = require('./lib/state.js')
 const { sanitizeUrl } = require('./lib/dsh-url.js')
 const { probeHttp } = require('./lib/probe.js')
@@ -82,6 +86,10 @@ const HELP = `Nomad — Portable Agent OS（Launcher ${LAUNCHER_VERSION}）
   paths                打印解析后的路径与运行时入口
   profile              查看自建 profile 状态（只读）
   profile --ensure     把自建 profile 自举到位（幂等；start 也会自动做）
+  skill                管理 Agent 技能（user-dsh 根：data/dsh-home/skills/，rank 400）
+  skill list           列出已安装 skill（含无效项的问题与被忽略项）
+  skill add <path>     安装本地 skill（<name>/SKILL.md 目录束 或 <name>.md 扁平文件）
+  skill remove <name>  卸载 skill（热生效：DSH 文件 watch，无需重启实例）
   logs                 查看最近日志
   url                  打印带 token 的访问地址（敏感，勿外传）
   open                 用系统浏览器重新打开当前实例
@@ -921,6 +929,100 @@ async function main() {
       }
       console.log(`补丁层       ${info.patchExists ? info.spec.patchPath : '(缺失 —— start 会补)'}`)
       console.log(`结论         ${info.problems.length === 0 ? '就绪：自研层已在 bundles 末位' : info.problems.join('；')}`)
+      break
+    }
+    case 'skill': {
+      const ctx = resolveContext(flags)
+      // 与 profile/rollback 同约定：positionals[0] 是命令本身，子命令从 [1] 起。
+      const sub = positionals[1]
+
+      const renderSkillList = () => {
+        const scan = listSkills({ root: ctx.root, config: ctx.config })
+        console.log(`skill 根目录   ${scan.base}`)
+        console.log('（user-dsh 根，rank 400；DSH 文件 watch 热更新 —— 装/删无需重启实例）')
+        if (!scan.exists) {
+          console.log('目录尚未创建 —— 首次 nomad skill add 时自动创建；当前视为空 skill 根。')
+          return
+        }
+        if (scan.skills.length === 0 && scan.ignored.length === 0) {
+          console.log('（空 skill 根，合法基线）')
+          return
+        }
+        if (scan.skills.length > 0) console.log('')
+        for (const item of scan.skills) {
+          const identity = item.skill === null
+            ? '(frontmatter 不可用)'
+            : item.skill.name === item.entryName
+              ? item.skill.name
+              : `${item.skill.name}（条目名 ${item.entryName}）`
+          const state = item.valid ? '有效' : `⚠ ${item.problems.length} 个问题`
+          console.log(`${identity}  [${item.kind === 'bundle' ? '目录束' : '扁平'}]  ${state}`)
+          if (item.skill !== undefined && item.skill !== null && item.skill.description !== undefined) {
+            console.log(`    描述   ${item.skill.description}`)
+          }
+          if (item.skill !== undefined && item.skill !== null && item.skill.whenToUse !== undefined) {
+            console.log(`    何时用 ${item.skill.whenToUse}`)
+          }
+          for (const problem of item.problems) console.log(`    - ${problem}`)
+          for (const note of item.notes ?? []) console.log(`    · ${note}`)
+        }
+        if (scan.ignored.length > 0) {
+          console.log('')
+          console.log('被忽略的条目（DSH 不会看）：')
+          for (const item of scan.ignored) console.log(`  ${item.entryName}  —— ${item.reason}`)
+        }
+      }
+
+      // -- skill list（无参数同义）
+      if (sub === 'list' || sub === undefined) {
+        renderSkillList()
+        break
+      }
+
+      // -- skill add <path>：安装本地 skill
+      if (sub === 'add') {
+        const source = positionals[2]
+        if (typeof source !== 'string' || source === '') {
+          console.error('用法：nomad skill add <本地路径>    （<name>/SKILL.md 目录束 或 <name>.md 扁平文件）')
+          console.error('  不碰网络下载：git 源请先手动 clone 到本地，再 add 本地路径。')
+          code = 1
+          break
+        }
+        const result = addSkill({ root: ctx.root, config: ctx.config }, source)
+        if (!result.ok) {
+          console.error(`安装失败：${result.error}`)
+          code = 1
+          break
+        }
+        console.log(`skill「${result.name}」已安装：${result.dir}（${result.format === 'bundle' ? '目录束' : '扁平文件'}）`)
+        if (result.skill !== undefined && result.skill !== null) {
+          console.log(`  描述 ${result.skill.description}`)
+        }
+        console.log('  热生效：运行中的实例会通过文件 watch 自动感知，无需重启。')
+        break
+      }
+
+      // -- skill remove <name>：卸载
+      if (sub === 'remove') {
+        const name = positionals[2]
+        if (typeof name !== 'string' || name === '') {
+          console.error('用法：nomad skill remove <name>    （skill 根下的目录名或去扩展名的文件名）')
+          code = 1
+          break
+        }
+        const result = removeSkill({ root: ctx.root, config: ctx.config }, name)
+        if (!result.ok) {
+          console.error(`卸载失败：${result.error}`)
+          code = 1
+          break
+        }
+        console.log(`skill「${result.name}」已卸载：${result.path}（${result.format === 'bundle' ? '目录束' : '扁平文件'}）`)
+        console.log('  热生效：运行中的实例会自动感知，无需重启。')
+        break
+      }
+
+      console.error(`未知子命令「${sub}」。可用：list / add <path> / remove <name>；无参数 = list。`)
+      code = 1
       break
     }
     case 'logs': {

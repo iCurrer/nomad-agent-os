@@ -204,6 +204,7 @@ Launcher 自举 `nomad` profile 已被真实 DSH 加载；`web` 是**内置保�
       patch 语法），集成进 `doctor` 第 18 项 —— **（2026-10-09 完成**，doctor 18 项全通过；
       含一个重要发现：上游模板 patch 文件是流式 `[]`，`yaml-lite` 只支持块式 →
       校验器短路兼容，不改公共解析器）
+      （注：3.2 落地后 doctor 为 **19 项**）
 - [x] 启动选择：`nomad start --profile <name>`（默认仍 `nomad`）—— **（2026-10-09 完成**：
       dry-run 实测 argv 正确携带覆盖名；保留名/路径分隔符在启动前即拒绝）
 - [x] 单测 + 替身冒烟覆盖上述每条 —— **（2026-10-09 完成**：`tests/profiles.test.js` 9 例，
@@ -213,11 +214,24 @@ Launcher 自举 `nomad` profile 已被真实 DSH 加载；`web` 是**内置保�
 
 现状：`skills/` 是空目录基线，无任何管理能力。
 
-- [ ] `nomad skill list` —— 按 3.0 确定的格式列出盘内 skill（名称/来源/启用态）
-- [ ] `nomad skill add <path>` / `remove <name>` —— 目录级安装与卸载（不碰网络下载，
+- [x] `nomad skill list` —— 按 3.0 确定的格式列出盘内 skill（名称/形态/启用态）
+      **（2026-10-09 完成**：目标目录锁定 `data/dsh-home/skills/`（user-dsh 根，rank 400）；
+      两种合法形态 `<name>/SKILL.md` / `<name>.md` 逐字对齐上游 `isPotentialSkillPath`；
+      无效项带问题清单（DSH 对非法 skill 只是**静默跳过** —— list 把它变成看得见）；
+      `.system` 保留名与非 skill 条目归入 ignored 并说明原因）
+- [x] `nomad skill add <path>` / `remove <name>` —— 目录级安装与卸载（不碰网络下载，
       安装源=本地路径或 git URL 由维护者手动 clone，保持零依赖）
-- [ ] 状态端点展示已安装 skill 数与清单（5-B 数据面扩展）
-- [ ] 单测覆盖（含畸形 skill 目录不崩溃）
+      **（2026-10-09 完成**：装前校验「会被 DSH 忽略的 skill」直接拒绝安装，把
+      「装了但不生效」挡在门外；已存在绝不覆盖；复制不用 `fs.cpSync` 而是自写递归
+      复制（行为可控 + 兼容受限执行环境）；热生效 —— DSH 对 skill 根做文件 watch
+      （`skills/change` 事件），装/删无需重启实例，真机实测通过）
+- [x] 状态端点展示已安装 skill 数与清单（5-B 数据面扩展）—— **（2026-10-09 完成**：
+      `/status` 新增 `skills` 段（base/total/valid/invalid/ignored/items），
+      面板状态区新增 Skills 行（数量 + 有效项名称））
+- [x] 单测覆盖（含畸形 skill 目录不崩溃）—— **（2026-10-09 完成**：
+      `tests/skills.test.js` 11 例；`doctor` 第 19 项「Skills 巡检」同步落地）
+- [x] 内置示例 skill `docs/examples/skills/hello-nomad/`（随盘入库；
+      `nomad skill add docs/examples/skills/hello-nomad` 一键安装体验全链路）
 
 ### 3.3 Memory / 数据面管理（依赖 3.0 的存储全景）
 

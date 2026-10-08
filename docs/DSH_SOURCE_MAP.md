@@ -392,6 +392,7 @@ Web 启动后：Host 侧 catalog 扫描 root/<projectKey>/* 目录          sess
 | 热更新 | 文件系统 watch，`skills/change` 事件广播 | `dsh-skill/src/index.ts:296`、`skill-filesystem:653-657` |
 | **Nomad 映射** | `DSH_HOME=data/dsh-home` → user-dsh 根 = **`data/dsh-home/skills/`**（当前不存在，需 3.2 创建基线）；**盘根 `skills/` 目录 DSH 根本不读**。user-agents 根 = `<私有 USERPROFILE>/.agents/skills`（env.js 已重定向 homedir → 盘内，无宿主泄漏） | `launcher/lib/env.js:11` |
 | **3.2 推论** | `nomad skill` 管理目标目录 = `data/dsh-home/skills/`（rank 400 档）；项目级 skill 由 Agent 工作区 `.dsh/skills` 承载，Nomad 不代管 | 本表 |
+| **3.2 落地** | `launcher/lib/skills.js`（2026-10-09）：`listSkills` / `addSkill` / `removeSkill` + `nomad skill list/add/remove`；形态与 frontmatter 校验逐字对齐本表契约（kebab 正则、name+description 必填、非法=DSH 静默跳过 → 由 list/doctor 变成看得见）。装/删利用热更新（`skills/change` watch）无需重启实例。复制刻意不用 `fs.cpSync`（受限执行环境的 fs shim 对其支持不完整），自写 `copyPath`。内置示例 `docs/examples/skills/hello-nomad/`（随盘入库） | `launcher/lib/skills.js`、`tests/skills.test.js` |
 
 ## DSH 版本
 

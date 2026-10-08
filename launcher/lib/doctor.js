@@ -25,6 +25,7 @@ const {
   findNodeModulesDir,
 } = require('./runtime.js')
 const { inspectNomadProfile, listProfiles } = require('./profile.js')
+const { listSkills } = require('./skills.js')
 
 /** 状态标识。 */
 const PASS = 'pass'
@@ -289,6 +290,48 @@ async function runDoctor(options) {
       FAIL,
       error instanceof Error ? error.message : String(error),
       '检查 profiles 目录权限 / 磁盘状态',
+    )
+  }
+
+  // 9c. Skills 巡检（Phase 3.2，第 19 项；只读）
+  //     巡检 user-dsh skill 根（data/dsh-home/skills/）。关键契约：非法 skill 不会让
+  //     DSH 失败，只会被静默跳过 —— 所以这里的价值是让「装了但不生效」变成看得见的 WARN。
+  //     目录不存在 / 为空都是合法基线（DSH 视为空 skill 根），不扣分。
+  try {
+    const scan = listSkills({ root, config })
+    if (!scan.exists) {
+      add('skills', 'Skills 巡检', PASS, `${scan.base}（目录尚未创建 —— DSH 视为空 skill 根；nomad skill add 首次安装时自动创建）`)
+    } else {
+      const broken = scan.skills.filter((item) => item.problems.length > 0)
+      const validNames = scan.skills.filter((item) => item.problems.length === 0).map((item) => item.entryName)
+      const lines = []
+      if (validNames.length > 0) lines.push(`有效 skill ${String(validNames.length)} 个：${validNames.join(', ')}`)
+      if (scan.ignored.length > 0) {
+        lines.push(`忽略 ${String(scan.ignored.length)} 项（DSH 不会看）：${scan.ignored.map((item) => `${item.entryName}（${item.reason}）`).join('；')}`)
+      }
+      if (scan.skills.length === 0 && scan.ignored.length === 0) {
+        add('skills', 'Skills 巡检', PASS, `${scan.base}（空 skill 根，合法基线）`)
+      } else if (broken.length === 0) {
+        add('skills', 'Skills 巡检', PASS, lines.join('\n'))
+      } else {
+        lines.unshift('以下 skill 已装但会被 DSH 静默忽略（必须修或删，否则永远不生效）：')
+        for (const item of broken) lines.push(`  ${item.entryName}: ${item.problems.join('；')}`)
+        add(
+          'skills',
+          'Skills 巡检',
+          WARN,
+          lines.join('\n'),
+          '修复 frontmatter（name 需 kebab-case，name/description 必填）或 nomad skill remove <name> 删除',
+        )
+      }
+    }
+  } catch (error) {
+    add(
+      'skills',
+      'Skills 巡检',
+      FAIL,
+      error instanceof Error ? error.message : String(error),
+      '检查 skills 目录权限 / 磁盘状态',
     )
   }
 
