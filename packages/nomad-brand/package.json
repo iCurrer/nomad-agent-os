@@ -1,0 +1,29 @@
+{
+  "name": "@nomad/dsh-client-brand",
+  "version": "0.0.1-dev",
+  "private": true,
+  "license": "MIT",
+  "description": "Nomad 品牌插件：占住侧栏品牌槽（mark + name）。注意 —— 本构建 profile 是 official，官方占用者会先到占槽，故必须配合 cordis.patch.yml 里对 ui-brand-official 的 disabled 让位才生效（见 ADR-0024）。零构建、纯手写 JS。",
+  "type": "module",
+  "exports": {
+    ".": {
+      "default": "./lib/host.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  },
+  "files": [
+    "lib"
+  ]
+}

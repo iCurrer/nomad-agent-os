@@ -1,0 +1,81 @@
+# config/compatibility.yaml — 版本与兼容性登记
+# 每次 Runtime / DSH / Schema 变更都必须更新本文件。
+
+nomad_version: "0.0.1-dev"
+dsh_version: "0.2.1-alpha.1+5badb150"   # 本地源码 clone（2026-10-03, MIT）
+dsh_npm_published: "0.2.0-rc.2"          # npm 上可直接使用的已构建版
+schema_version: 0
+migration_version: 0
+
+# 便携 Node：随盘携带，不依赖宿主机
+node_runtime:
+  version: "22.23.3"                       # 官方 win-x64，LTS "Jod"
+  path: "runtime/node/"
+  source: "https://nodejs.org/dist/v22.23.3/node-v22.23.3-win-x64.zip"
+  sha256: "2b0ff57b049cda1bbcea2240eec20467018713c1efe1f7360c2681859b90ed71"
+  verified: true                           # 已与官方 SHASUMS256.txt 比对通过
+  satisfies_dsh_engines: "^22.19.0 || >=24.0.0"
+
+# Runtime 矩阵：已下载/已验证的 DSH 版本
+runtime_versions:
+  - version: "0.2.1-alpha.1"
+    path: "runtime/dsh/0.2.1-alpha.1/"
+    source: "npm"
+    delivery: npm-bundled
+    verified: true                         # integrity 由 npm 校验
+    smoke_test: passed                     # 2026-10-08 真实 DSH 冒烟 11/11
+  - version: "0.2.1-alpha.1"
+    path: "runtime/dsh/current/"           # 清单间接指针（非软链，见 ADR-0016）
+    delivery: manifest-pointer
+    verified: true
+    smoke_test: passed                     # 2026-10-08
+
+# current 指针机制
+current_pointer:
+  mechanism: manifest                     # manifest | junction | symlink
+  manifest: "runtime/dsh/current/nomad-runtime.json"
+  reason: "junction/symlink 在 exFAT/FAT32 不可用，且盘符变更即失效；清单是纯文本、跨文件系统、可人工编辑"
+  rollback: "改写 manifest 的 entry 指向目标版本目录即可"
+
+# Nomad 自建 DSH profile（ADR-0021）
+# 注意：内置模板名 acp/web/headless/sdk/sdk-minimal 是**保留名**，不可作为自建 profile 目标。
+nomad_profile:
+  name: "nomad"
+  derived_from: "web"                    # 只取内置模板的 bundles 作基线
+  location: "data/dsh-home/profiles/nomad"
+  bundles:                               # 前三层由上游模板给出；末位是自研层
+    - "@deepseek-ai/dsh-base"
+    - "@deepseek-ai/dsh-web-app"
+  appended_bundle: "packages/nomad-web-app"   # 实际写盘形态 = 相对 profile 目录的路径，由 Launcher 计算
+  bootstrap: "launcher/lib/profile.js#ensureNomadProfile"
+  verified: true
+  smoke_test: passed                     # 2026-10-08 真实 DSH 加载自举 profile 并渲染 Web UI（9/9）
+
+notes: "2026-10-08：首次打包便携运行时（Node 22.23.3 + DSH 0.2.1-alpha.1）。"
+
+# 平台支持状态
+platforms:
+  windows-x64:
+    status: target                 # target | in-progress | verified
+    priority: 1
+  linux-x64:
+    status: planned
+    priority: 2
+  macos:
+    status: planned
+    priority: 3
+
+# 上游兼容性
+upstream:
+  track_master: false              # 硬性禁止
+  auto_update: false               # 硬性禁止
+  patch_count: 0                   # 见 docs/UPSTREAM.md
+  breaking_change_watch:
+    - "profile group 行的形状：必须 name: cordis:group + group: true + config（空写 []），缺任一项都会在运行期被禁用或抛错，而 --dump-config 看不出来（2026-10-08 实测）"
+
+# 迁移
+migration:
+  backup_required: true
+  rollback_supported: true
+  last_migration: ""
+  notes: "2026-10-08：修复被打断的 npm install 留下的半成品依赖树（4 个包）。再跑 npm install 无效（npm 信任 node_modules/.package-lock.json）—— 必须先把问题目录挪走再装。已加两道闸：doctor 锁文件对账 + 真实冒烟零告警断言。"

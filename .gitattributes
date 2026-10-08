@@ -1,0 +1,38 @@
+# Nomad — Git 属性
+#
+# 开发环境是 Windows + exFAT 可移动盘，但代码本身必须跨平台可移植，
+# 故统一以 LF 入库、由 Git 在检出时按平台处理。
+
+# 默认：自动识别文本，统一 LF
+* text=auto eol=lf
+
+# 明确文本类型
+*.js     text eol=lf
+*.json   text eol=lf
+*.md     text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.sh     text eol=lf
+*.txt    text eol=lf
+VERSION  text eol=lf
+
+# Windows 入口脚本保持 CRLF —— cmd.exe 对纯 LF 的解析不可靠
+*.cmd    text eol=crlf
+*.bat    text eol=crlf
+
+# 二进制：不做换行转换
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.zst    binary
+*.zstd   binary
+*.exe    binary
+*.7z     binary
+*.zip    binary
+
+# GitHub 语言统计与搜索友好度
+docs/**      linguist-documentation
+vendor/**    linguist-vendored
+runtime/**   linguist-vendored

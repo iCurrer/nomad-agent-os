@@ -1,0 +1,49 @@
+# config/permissions.yaml — Agent 权限分级模板
+# 原则：默认保守，敏感操作一律询问。
+
+levels:
+  read:
+    default: allow           # 自动允许
+  write:
+    default: workspace       # workspace 内自动允许，workspace 外询问
+  execute:
+    default: allow           # 普通命令自动允许
+    deny_patterns:
+      - "rm -rf /"
+      - "format "
+      - "del /f /s /q"
+      - "Remove-Item -Recurse -Force"
+  network:
+    default: ask             # 按工具判断
+  sensitive:
+    default: ask             # 必须询问：读取密钥、用户目录、系统凭据
+  external_upload:
+    default: ask             # 必须询问
+  git_push:
+    default: ask             # 必须询问
+  production_deploy:
+    default: ask             # 必须询问
+
+# 强制禁止（不可被 profile 提升为 allow）
+never:
+  - modify_system_env
+  - modify_registry
+  - delete_user_data
+  - upgrade_dsh_master
+  - auto_git_push
+  - write_outside_nomad_root_and_workspace
+
+profiles:
+  coding:
+    execute: allow
+    write: workspace
+    network: ask
+    production_deploy: ask
+  research:
+    execute: ask
+    write: workspace
+    network: allow
+  devops:
+    execute: allow
+    network: allow
+    production_deploy: ask   # 仍必须询问

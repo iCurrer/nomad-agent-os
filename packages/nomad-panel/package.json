@@ -1,0 +1,30 @@
+{
+  "name": "@nomad/dsh-client-panel",
+  "version": "0.0.1-dev",
+  "private": true,
+  "license": "MIT",
+  "description": "Nomad 自有面板插件：在侧栏增量长出一个 Nomad 入口（sidebar.panellist / list），并在主区渲染 Nomad 自己的面板（main / keyed 新 key）。**不替换上游侧栏、不禁用任何占用者** —— 两条槽都是增量型（list / 未占用的 keyed key），故零冲突。零构建、纯手写 JS。",
+  "type": "module",
+  "exports": {
+    ".": {
+      "default": "./lib/host.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  },
+  "files": [
+    "lib"
+  ]
+}

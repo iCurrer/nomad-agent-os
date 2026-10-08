@@ -1,0 +1,11 @@
+# Nomad L4-a 最小探针（Phase 2 第一步的前置实验，由 tests/smoke/l4a-patch-probe.js 使用）
+#
+# 目的：验证「自研 patch 层能被叠加进 DSH 的 profile 组合树」—— L4-a 的最底层机制。
+# 做法：只覆盖 system-prompt 一行，写入哨兵串；不触碰任何其他行。
+#
+# ⚠️ 已知行为（实测确认，L4-a 实现时必须记住）：
+#    patch 会替换目标行的**整个 config**，所以覆盖任何一行都必须**重述该行拥有的所有键**，
+#    否则会静默丢掉未重述的配置。本探针有意不重述，正是为了把这个行为固定成断言。
+- id: system-prompt
+  config:
+    personaPrefix: NOMAD-L4A-PROBE-OK

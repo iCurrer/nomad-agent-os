@@ -1,0 +1,162 @@
+# nomad-web-app — Nomad 自研 Web 表面补丁层
+#
+# 定位：profile 的**第三个补丁层**，排在 `@deepseek-ai/dsh-base` 与 `@deepseek-ai/dsh-web-app` 之后。
+# 姿态：L4-a —— 重述 roster、复用官方前端 dist、**不改 DSH 源码**（依据 docs/UI_ARCHITECTURE.md §8.5 / ADR-0011）。
+# 机制：本包通过 package.json 的 `dsh.bundle.patch` 声明自己是一个 bundle，DSH 会按序叠加本文件的每一行补丁。
+#
+# ⚠️ 铁律（实测确认，见 §8.5.1）：`id:` 覆盖会替换目标行的**整个 config** ——
+#    覆盖任何一行都必须**重述该行拥有的所有键**，未重述的键会**静默丢失**。
+#    本文件每一处 `id:` 覆盖都做了全量重述；新增覆盖时务必先去 `--dump-config` 里抄全键。
+#
+# 层序（`--dump-config` 的 $comment 原文）：Bundle → profile → home → CLI。
+
+# ── 1) 注入 Nomad 身份：让 Agent 知道自己正跑在一个可移动盘上 ────────────────────
+# 覆盖的是 dsh-web-app 已有的 system-prompt 行；两个键都必须重述（该行 config 只有这两个键）。
+- id: system-prompt
+  config:
+    personaPrefix: You are a coding agent powered by the {{model}} model.
+    personaSuffix: >-
+      Your working directory is {{cwd}}.
+      You are running from a Nomad portable drive: the agent home, sessions, and workspace
+      all live on that removable volume. Treat the drive itself as the machine.
+
+# ── 2) 明确声明：会话全文检索索引不落盘 ─────────────────────────────────────────
+# 上游 dsh-web-app 已是 `:memory:` + `never`；这里由 Nomad **显式重述**，把它变成
+# Nomad 自己承诺的一部分（「盘上不留 sqlite 文件」），而不是依赖上游默认值哪天不变。
+- id: session-query-sqlite
+  config:
+    path: ':memory:'
+    openAt: never
+
+# ── 3) 预留 Nomad 命名空间容器 ──────────────────────────────────────────────────
+# 为后续挂自研插件（memory / skills / 项目面板）预留一个可寻址的挂载点。
+# 本阶段**有意不挂任何实现**：`group: true` 只是行容器（schema 原文：does not select
+# the plugin implementation），因此零运行期风险，可安全地先立骨架。
+#
+# ⚠️ 铁律（2026-10-08 实测踩到，两条，缺一不可）：
+#   ① `group: true` 的行**必须同时给 `name: cordis:group`**。少了 `name`，运行期 preflight
+#      在 `manifestOf(ctx, row.name, base)` 里读到 undefined 而抛错，整行被**静默禁用**：
+#        dsh: disabling profile plugin row "nomad": its declared peer dependencies
+#             cannot be validated: Cannot read properties of undefined (reading 'startsWith')
+#   ② group 行**必须给 `config`（子行数组；空容器就写 `[]`）**。少了它，
+#      `Group.update(undefined)` 在第 82 行 `config.map(...)` 直接抛 TypeError：
+#        TypeError: Cannot read properties of undefined (reading 'map')
+#            at Group.update (cordis-plugin-loader/lib/index.js:82:44)
+#      上游每一处 group 行的 `config:` 里都装着子行，不存在"裸 group"。
+#    上游 11 处 group 行**无一例外**两个键都齐 —— 照抄即可。
+#
+#    注意：`--dump-config` **看不出**这两个错误（它只组合、不做 preflight、不初始化插件），
+#    只有真启动才会暴露 —— 所以必须有「运行期零告警」的断言兜底
+#    （`tests/smoke/real-runtime-smoke.js` 的零告警步骤）。
+- insert:
+    - id: nomad
+      name: cordis:group
+      group: true
+      config:
+        # ── Nomad 品牌插件（Phase 2 阶段 4）─────────────────────────────────────
+        # 占住侧栏的两个品牌槽：`sidebar.brand.mark`（标识）+ `sidebar.brand.name`（字标）。
+        #
+        # ⚠️ 2026-10-08 更正（原判断是错的，别重蹈）：
+        #   曾以为「上游 `ui-brand-official` 只在 `official` 构建里注册，本构建会落到 shell
+        #   兜底（鱼标 + local-build 文案），所以本行挂上即肉眼可见」。**实测证伪**：
+        #   `ui-brand-official/lib/client.js` 里那句
+        #     `if (process.env.DSH_CLIENT_BUILD_PROFILE !== 'official') return`
+        #   被构建期**死代码消除**掉了 —— 全套已构建产物里该标识符**只出现在 README 中**
+        #   （`Grep DSH_CLIENT_BUILD_PROFILE` 实证）。⇒ 本构建的 profile 就是 `official`，
+        #   官方占用者**一直在注册**，一直占着这两个槽。
+        #   而两个槽都是 `kind: 'single'` → 后到者撞 `duplicate declaration` 被拒
+        #   （依据 `ui-renderer/src/client/registry.ts:487` 注释：core write first，重复注册在 core 层抛错）。
+        #   症状：本插件**确实**挂上了、也**确实**进了启动图，但注册被拒 → **界面零变化**。
+        #   ⇒ 光挂插件不够，必须同时在文件末尾**禁用官方那一行**（见第 4 段），槽才空得出来。
+        #
+        # 为什么 `name` 写**相对路径**（而不是包名）：
+        #   与 `dsh.profile.bundles` 的相对路径同一策略 —— 源留在 repo、零复制零漂移（ADR-0020）。
+        # 解析基准（**实测，不是推断**）：相对名解在**声明本补丁的那个包目录**下，
+        #   即 `packages/nomad-web-app/` —— 不是 profile 目录。
+        #   实证：写 `../../../../packages/nomad-brand/lib/host.js` 时，
+        #   `--dump-config` 输出 `name: file:///D:/packages/nomad-brand/lib/host.js`（丢了 `/u盘`，多爬了一层）；
+        #   基准 = 本包目录向上 4 层 = `D:/`，与观测吻合。
+        #   ⚠️ 别照抄 `dsh.profile.bundles` 里那个 `../../../../…`：bundles 的基准是 profile 目录，两者不同。
+        # 客户端半的定位（`@deepseek-ai/dsh-client-modules` → `locatePkgJson`）：
+        #   路径型名字 → 从该模块**向上找最近的 package.json** 认领，再看它的
+        #   `dsh.client.platform === 'web'` 与 `exports["./client"]`；
+        #   随后 `readFileSync` **原样吐出、运行时不编译** —— 这正是本包可以**零构建**手写的原因。
+        # 失败模式（可判伪）：解析不到时 preflight 会在 stderr 打
+        #   `dsh: disabling profile plugin row "nomad-brand": …`
+        #   —— 由 `tests/smoke/real-runtime-smoke.js` 的「零告警」闸捕获。
+        - id: nomad-brand
+          name: ../nomad-brand/lib/host.js
+
+        # ── Nomad 自有面板（Phase 2 阶段 5-B 结构层）───────────────────────────────
+        # 在侧栏**增量长出一个 Nomad 入口**，并在主区渲染 Nomad 自己的面板。
+        #
+        # ⚠️ 与 nomad-brand 的关键差别：**本包不需要 disable 任何上游行** ——
+        #   因为它占的两条槽都是**增量型**，而不是「single 抢占」：
+        #     · `sidebar.panellist` — kind: **list**  ⇒ 新 id 即新行；
+        #       侧栏的面板行**直接来自本槽的注册条目**（`ui-sidebar/src/client/index.ts:50-54`
+        #       逐字：`entriesOfSlot('sidebar.panellist')` → `{id, order, label}` → 排序渲染）
+        #       ⇒ 注册即出现在侧栏，无需改上游。
+        #     · `main` — kind: **keyed** ⇒ 新 key 即新格子，与 conversation/plugins/schedules 并列；
+        #       AppFrame 用 `renderSlot('main', {}, { entryKey: panelId ?? 'conversation' })` 寻址，
+        #       故本行 key 必须与侧栏行的 id 相同（两处都是 `"nomad"`）。
+        #
+        # ⚠️ 为什么**不**占 `sidebar` 槽整块替换（曾被列为候选，已否决）：
+        #   `ui-layout/src/client/index.ts:58-67` 契约原文 ——
+        #     "registering here replaces the navigation column outright rather than adding
+        #      to it, **and the seats it declares disappear with it**"
+        #   即会连带丢掉 `sidebar.workspaces`（会话列表）与 `sidebar.settings`（设置），
+        #   必须自己重新声明并重写（上游 SidebarRoot 316 行 + 折叠动画 + 滚动条管理）。收益/风险比差。
+        #
+        # 解析基准同上：相对名解在**声明本补丁的包目录**（`packages/nomad-web-app/`）下
+        #   ⇒ `../nomad-panel/lib/host.js`（与 nomad-brand 同级，不是 profile 目录）。
+        # 失败模式（可判伪）：解析不到时 preflight 打
+        #   `dsh: disabling profile plugin row "nomad-panel": …` —— 由真实冒烟的「零告警」闸捕获。
+        - id: nomad-panel
+          name: ../nomad-panel/lib/host.js
+
+        # ── Nomad 自有外观（Phase 2 阶段 5-C 换肤）─────────────────────────────
+        # 通过 ctx.theme.overrideTokens() 覆盖 --dsw-alias-* 语义变量：浅色换暖米白
+        # 大地色系，暗色保持默认。零冲突（overrideTokens 是「堆叠 token 覆盖层」，
+        # 不占槽、不禁用任何上游行），无需 disable 任何占用者。
+        #
+        # 解析基准同上：相对名解在声明本补丁的包目录下 ⇒ `../nomad-theme/lib/host.js`。
+        # 失败模式（可判伪）：解析不到时 preflight 打
+        #   `dsh: disabling profile plugin row "nomad-theme": …` —— 由真实冒烟的「零告警」闸捕获。
+        - id: nomad-theme
+          name: ../nomad-theme/lib/host.js
+
+# ── 4) 让出侧栏品牌槽：禁用官方品牌占用者 ──────────────────────────────────────
+# 没有这一步，上面那个 `nomad-brand` 插件就是个哑弹（实测：挂上了、进了启动图，
+# 但注册被 `duplicate declaration` 拒绝，界面毫无变化）。
+#
+# 为什么用 `disabled: true` 而不是「改它的 name 指向我们的包」：
+#   `dsh-app-boot/lib/index.js` 的 `applyEntryPatches()` 逐字规定 ——
+#     const { id, insert, name, ...overrides } = patch
+#     if (name && name !== target.name) { warn('patch: name mismatch …'); continue }
+#     for (const [key, value] of Object.entries(overrides)) { if (key === 'id') continue; target[key] = value }
+#   即 **`name` 只能"断言"目标行的既有名字，不能改名**（schema 原文亦同：
+#   "A truthy `name` asserts the existing plugin name rather than renaming it."）。
+#   其余字段则**直接覆盖** —— `disabled` 正是其一。
+#   另一条被排除的路：让我们的行插到官方行**之前**抢先注册 —— 能赢，但会把官方包的
+#   `apply` 逼成抛错（被核心吞掉），属于"靠制造失败取胜"，不干净。禁用才是正解。
+#
+# 为什么禁用是安全的：
+#   ① 官方包只做一件事（占两个槽），宿主半 `lib/index.js` 是空 `apply`，无别的贡献；
+#   ② 上游自己不注册 conversation hero（其源码注释明说留在声明包的兜底上），故禁用不影响 hero；
+#   ③ 没有任何插件 inject 它（启动图里各条 `inject` 只引 renderer / sidebar）。
+#
+# 机制依据（三处，缺一不能成立）：
+#   · schema：`disabled` 只接受布尔 `true`（"The Loader coerces other truthy values as
+#     disabled; this schema rejects them."）—— 写 `yes` / `1` 都会**被校验拒绝**；
+#   · Loader：`if (row.disabled === true && !row.group) continue` → 该行**不被加载**；
+#   · 客户端 roster：`@deepseek-ai/dsh-client-modules` 扫描 Loader 的 entries，
+#     且 `if (… || entry.disabled) continue` → 该行**不进 `window.__DSH_BOOT__`**，
+#     浏览器根本不会去取 `dsh-client-ui-brand-official/client.js`。
+#   （若只有前两条，"行不加载但仍然进启动图"会让槽依旧被占 —— 所以第三条必须验证。）
+#
+# 验证方式（可判伪，不靠"看起来对"）：
+#   · `--dump-config` → 该行应带 `disabled: true`；
+#   · 真启动后解析首页 `__DSH_BOOT__` → `brand-official` **必须消失**、`@nomad/dsh-client-brand` 仍在
+#     （由 `tests/smoke/real-runtime-smoke.js` 的断言守住）。
+- id: ui-brand-official
+  disabled: true

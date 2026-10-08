@@ -1,0 +1,8 @@
+{
+  "name": "fake-dsh",
+  "version": "0.0.0-fake",
+  "entry": "cli.js",
+  "profile": "web",
+  "app_args": [],
+  "_comment": "冒烟测试替身。它不是 DSH，只是复刻 DSH web 的对外可观测行为：参数族、dsh web: <url> 启动行、HTTP 端口绑定。见 tests/smoke/portable-smoke.js。"
+}

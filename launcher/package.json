@@ -1,0 +1,13 @@
+{
+  "name": "nomad-launcher",
+  "private": true,
+  "version": "0.1.0-phase1",
+  "description": "Nomad Portable Launcher — USB root detection, runtime discovery, host isolation, DSH boot, browser handoff, lifecycle CLI.",
+  "type": "commonjs",
+  "bin": {
+    "nomad": "./nomad.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

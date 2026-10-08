@@ -1,0 +1,28 @@
+{
+  "name": "@nomad/dsh-client-theme",
+  "version": "0.0.1-dev",
+  "private": true,
+  "license": "MIT",
+  "description": "Nomad 自有外观（阶段 5-C）：通过 ctx.theme.overrideTokens() 覆盖 --dsw-alias-* 语义变量，把**浅色模式**换成 Nomad 的暖米白大地色系（主背景 #F5EEE8 / 主色 #C99F8A / 强调 #A87560 / 文字 #332B27 等），**暗色模式保持 DSH 默认**。零构建、纯手写 JS。",
+  "type": "module",
+  "exports": {
+    ".": {
+      "default": "./lib/host.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-theme"
+      ]
+    }
+  },
+  "files": [
+    "lib"
+  ]
+}

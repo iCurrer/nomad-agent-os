@@ -1,0 +1,127 @@
+# config/nomad.yaml — Nomad 主配置
+# 规则（AGENTS.md 第 4 节）：
+#   - 所有路径必须相对 NOMAD_ROOT，禁止宿主绝对路径（加载期强制校验）；
+#   - 禁止出现密钥值，只允许引用式凭据（如 credential_ref）；
+#   - 占位符：${NOMAD_ROOT}、${paths.<key>}，加载期展开，残留即报错。
+# 解析器：launcher/lib/yaml-lite.js（零依赖 YAML 子集；不支持锚点/多行标量/流式集合）。
+
+nomad:
+  version: "0.0.1-dev"
+  stage: phase1-bootstrap
+
+paths:
+  root: "${NOMAD_ROOT}"
+  runtime: "runtime"
+  data: "data"
+  # DSH 状态根：profile / cordis.patch.yml / 会话都落在这里
+  # 必须指向 U 盘，禁止落到宿主用户目录
+  dsh_home: "data/dsh-home"
+  workspace: "workspace"
+  skills: "skills"
+  profiles: "profiles"
+  mcp: "mcp"
+  config: "config"
+  # 临时文件重定向目标：DSH 内部 20+ 处 tmpdir() 都会落到这里
+  tmp: "data/tmp"
+  run: "data/run"
+  backups: "data/backups"
+
+runtime:
+  # 版本化运行时；current 指向当前版本目录（软链/交界点）
+  dsh:
+    current: "runtime/dsh/current"
+    keep_versions: 3        # 保留历史版本数量，便于回滚
+    # 交付流派：
+    #   npm-bundled  = 预置 npm 已构建包（推荐基线，用户机零编译）
+    #   source-built = 开发机 / CI 构建产物（支持 dsh plugin 管理插件）
+    delivery: npm-bundled
+    npm_package: "@deepseek-ai/dsh"
+    # 与 vendor/ 源码 clone 的 tag 对齐（compatibility.yaml 的 dsh_version），
+    # 避免"源码说 A、运行时装 B"的认知漂移（AGENTS.md 第 0 节优先级阶梯）。
+    pinned_version: "0.2.1-alpha.1"
+    # 启动方式：node-entry = 直接调 node 入口（禁止 npx，npx 会联网）
+    launch_mode: node-entry
+    # 要启动的 DSH profile。注意：内置模板名（acp/web/headless/sdk/sdk-minimal）是
+    # **保留名**，不可作为自建 profile 目标（dsh-app-boot/lib/index.js:529-535,146）。
+    # Nomad 用 profile_template 派生自己的 profile：启动前由 Launcher 自举
+    # （launcher/lib/profile.js，写 $DSH_HOME/profiles/nomad/），把自研 bundle
+    # 追加到 bundles 末位。详见 docs/UI_ARCHITECTURE.md §8.5.1 与 ADR-0020/0021。
+    profile: "nomad"
+    # 派生来源：必须是上游内置模板名
+    profile_template: "web"
+    # 启动前自举 profile（只写盘内 $DSH_HOME/profiles/<name>/）。false = 由人手工维护。
+    ensure_profile: true
+    # 自研 bundle 源（相对 NOMAD_ROOT）。必须是合法 bundle：package.json 里声明
+    # dsh.bundle.patch。以**相对路径**写进 profile 的 bundles（零物化，ADR-0020）。
+    bundle_source: "packages/nomad-web-app"
+    # launcher 级 flag（放在 --profile 之后、app flag 之前），如：["--patch", "config/nomad.patch.yml"]
+    launcher_args: []
+    # app 级 flag（DSH web 命令族：--host/--port/--public-url/--trusted-host/--no-open）
+    # 注意：--host/--port/--no-open 由启动器按配置自动生成，不要在这里重复写。
+    app_args: []
+    auto_update: false       # 硬性禁止自动升级
+    track_master: false      # 硬性禁止追踪 master
+  node:
+    mode: bundled           # bundled = 随 U 盘携带，不依赖宿主机
+    entry: "runtime/node"
+
+web:
+  # 只允许 127.0.0.1：DSH 主动拒绝 0.0.0.0
+  # 依据 packages/bundle/web-app/src/startup.ts:85-87（会把 RCE 暴露到网络）
+  host: "127.0.0.1"
+  # 0 = 交给 OS 协商可用端口（等价 DSH `--port 0`）；禁止写死端口
+  # 依据 packages/bundle/web-app/src/startup.ts:61 与上游 apps/desktop-host/src/index.ts:30
+  port: 0
+  default_port_hint: 3080
+  open_browser: true
+  browser_path: ""          # 留空 = 系统默认浏览器
+
+status:
+  # 只读状态端点（面板「身份/运行态/健康度」三类数据的地基，见 docs/HOST_TO_CLIENT.md §4 路径 B）。
+  # 为什么固定端口：面板是零构建手写产物，读不到运行时随机端口（DSH_CLIENT_* 是构建期内联），
+  # 固定端口是唯一零魔法的桥接。端口冲突时端点启动失败，面板退化为静态骨架，其余功能不受影响。
+  host: "127.0.0.1"
+  port: 3090
+  # 面板轮询间隔（毫秒）。低频状态无需毫秒推送，几秒一次即可。
+  poll_interval_ms: 5000
+
+isolation:
+  enabled: true
+  # 策略：allowlist（白名单）—— 仅继承下列变量，其余一律不传
+  # 依据：上游 apps/desktop/scripts/test-host-updates.ts:34-39 的官方隔离先例
+  # 详见 docs/HOST_ISOLATION.md
+  strategy: allowlist
+  inherit_allowlist:
+    - path
+    - systemroot
+    - windir
+    - comspec
+    - pathext
+  # 进程级强制覆盖；仅作用于子进程，禁止修改系统环境变量
+  # 相对值按 NOMAD_ROOT 解析（见 isolation.resolve_relative_to_root）
+  override:
+    DSH_HOME: "${paths.dsh_home}"     # 头号变量：会话记录默认写在 <DSH_HOME>/sessions
+    HOME: "${paths.dsh_home}"
+    USERPROFILE: "${paths.dsh_home}"
+    TEMP: "${paths.tmp}"
+    TMP: "${paths.tmp}"
+    TMPDIR: "${paths.tmp}"
+  resolve_relative_to_root: true
+  # 不继承 APPDATA / LOCALAPPDATA：源码中二者只被读（探测宿主编辑器）不被写
+  # 注意：DSH_HOME 属 bootstrap-only，只能由 Launcher 注入进程环境，写 .env 会被拒绝
+  # 其余可写点已全部确认位于 DSH_HOME 之下（见 docs/HOST_ISOLATION.md §3）
+
+logging:
+  level: info               # debug | info | warn | error
+  dir: "data/logs"
+  max_files: 10
+
+behavior:
+  auto_update: false        # 永不自动更新
+  track_master: false       # 禁止追踪 master
+  auto_backup_before_migrate: true
+  graceful_shutdown_timeout_ms: 8000
+  hard_kill_after_timeout: true
+
+theme:
+  mode: dark                # dark | light | system

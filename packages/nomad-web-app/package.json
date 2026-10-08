@@ -1,0 +1,19 @@
+{
+  "name": "@nomad/nomad-web-app",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Nomad 自研 Web 表面补丁层：在 @deepseek-ai/dsh-web-app 之上叠加 Nomad 的行补丁与插件挂载点（L4-a 姿态，不 fork 上游源码）。",
+  "license": "MIT",
+  "keywords": [
+    "nomad",
+    "dsh-bundle",
+    "profile-patch-layer"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": [
+        "./cordis.patch.yml"
+      ]
+    }
+  }
+}

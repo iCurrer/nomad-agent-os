@@ -1,0 +1,26 @@
+# config/providers.yaml — Model Provider 配置模板
+#
+# 安全铁律：
+#   - 本文件【禁止】出现任何明文 api_key / token / secret
+#   - 只允许保存 credential_ref（指向 OS Credential Store 或加密 Secret Store 的键名）
+#   - 本文件可以进 Git（因为不含任何密文以外的敏感值）
+
+providers:
+  - id: example-openai-compatible
+    type: openai-compatible
+    enabled: false
+    base_url: "https://api.example.com/v1"
+    credential_ref: "nomad/provider/example-openai-compatible"   # 仅引用，不存值
+    models:
+      - id: ""
+        context_window: 0
+
+# 说明：
+#   credential_ref 的实际取值由 Launcher / Secret Store 在运行时解析。
+#   若需完全便携，credential_ref 指向加密 Secret Store 中的条目（USB 上仅存密文）。
+
+secrets:
+  backend: os-credential-store   # os-credential-store | encrypted-store
+  encrypted_store:
+    path: "data/secrets.enc"
+    kdf: ""
