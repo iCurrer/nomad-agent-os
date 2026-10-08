@@ -173,7 +173,88 @@ Nomad Launcher → 检测 USB Root → 检测 Runtime → 设置环境 →
 
 ## Phase 3 — Nomad Agent OS
 
-新增：Projects ｜ Memory ｜ Skills ｜ Profiles ｜ Permissions ｜ Runtime Manager ｜ Backup ｜ Update ｜ Rollback
+> 细化于 2026-10-09（基于实测侦察，见各项「现状」）。铁律不变：**launcher-only**、
+> 零新依赖、路径从 `NOMAD_ROOT` 派生、不碰 DSH 模块图、不打"看起来能工作"的勾。
+> DSH 内部契约一律以 `vendor/deepseek-harness/` 上游源码为准（npm 包只发 `lib/`，
+> 无源码树 —— 2026-10-09 实测）。
+
+### 3.0 契约勘探（前置，全部只读）
+
+- [ ] **Skill 契约**：上游 `packages/skill/` 的 skill 存放目录、清单格式、加载时机
+      （`DSH_SOURCE_MAP.md` 第 8 行仅记了包位置，无目录契约）→ 产出补进 `DSH_SOURCE_MAP.md`
+- [ ] **存储全景勘探**：`data/dsh-home/` 下 `sessions/` `storages/session_projcache` `storages/workspace.json`
+      `AppData/` `Documents/` 逐一体积、增速、归属（哪些是"记忆"，哪些是缓存可清理）
+- [ ] **Permissions 消费方勘探**：上游 DSH 的权限系统长什么样（`packages/` 里有无
+      permission/approval 机制）、Nomad 的 `config/permissions.yaml` 模板该由谁消费
+      （launcher 注入？面板展示？还是仅作规范文档）—— 勘探完才定 3.4 的形状
+
+### 3.1 Profiles 管理器（基础最厚，先做）
+
+现状：引擎已真实创建 `headless` / `nomad` 两个 profile（`data/dsh-home/profiles/`），
+Launcher 自举 `nomad` profile 已被真实 DSH 加载；`web` 是**内置保留名**不可占用
+（`profile-boot.ts:116-131`）；profile 结构 = `package.json`（bundles 相对 profile 目录）
++ `cordis.yml`（恒 `[]`）+ `cordis.patch.yml`（insert: group 三键缺一不可）。
+
+- [ ] `nomad profile list` —— 列出全部 profile + 哪个是当前启动用的 + 来源（自举/引擎/用户）
+- [ ] `nomad profile create <name>` —— 从模板生成合法骨架（校验保留名、名字合法性）
+- [ ] `nomad profile validate <name>` —— 结构校验（package.json 可解析、bundles 路径存在、
+      patch 语法三键齐全），集成进 `doctor` 第 18 项
+- [ ] 启动选择：`nomad start --profile <name>`（默认仍 `nomad`）
+- [ ] 单测 + 替身冒烟覆盖上述每条
+
+### 3.2 Skills 管理（依赖 3.0 的契约结论）
+
+现状：`skills/` 是空目录基线，无任何管理能力。
+
+- [ ] `nomad skill list` —— 按 3.0 确定的格式列出盘内 skill（名称/来源/启用态）
+- [ ] `nomad skill add <path>` / `remove <name>` —— 目录级安装与卸载（不碰网络下载，
+      安装源=本地路径或 git URL 由维护者手动 clone，保持零依赖）
+- [ ] 状态端点展示已安装 skill 数与清单（5-B 数据面扩展）
+- [ ] 单测覆盖（含畸形 skill 目录不崩溃）
+
+### 3.3 Memory / 数据面管理（依赖 3.0 的存储全景）
+
+现状：`nomad projects` 已能读 `workspace.json`；sessions 落盘格式已验证（阶段 3.5）。
+
+- [ ] `nomad storage` —— 盘内数据全景报告：各目录体积/文件数/最近写入时间，
+      区分「长期数据」（sessions/workspace/profiles）与「可清理」（tmp/AppData 缓存）
+- [ ] `nomad storage clean --dry-run` / 实际清理（只清 3.0 勘探确认可清理的白名单目录，
+      **绝不进 sessions**；清理前强制确认 flag）
+- [ ] 会话导出（可选）：`session.v4.jsonl.zstd` 解包为可读 Markdown（给"换机带走记忆"一个人类可读形态）
+- [ ] 单测 + 只读保证验证
+
+### 3.4 Permissions 落地（依赖 3.0 的消费方勘探结论）
+
+现状：`config/permissions.yaml` 是完整模板（8 级 + never 硬禁止清单），**但无任何代码消费它**。
+
+- [ ] 按 3.0 结论接线：launcher 在 `--dry-run` 与 `doctor` 中展示生效的权限档位（最低限度）；
+      若上游有原生 approval 机制则评估桥接而非自造
+- [ ] `never` 清单（改环境变量/改注册表）至少在 `doctor` 中自证与宿主隔离约束一致
+- [ ] 单测覆盖配置解析与非法值拒绝
+
+### 3.5 Runtime Manager（CLI 已有底子，补"更新"与自动化）
+
+现状：`rollback`（列表/切换/校验）与 `backup`/`restore` 已在 V1 落地。
+
+- [ ] `nomad update --check` —— 只读查询 npm registry 上游 `@deepseek-ai/dsh` 最新版本，
+      与盘内 `current` 对比（不自动升级 —— 铁律：升级必须维护者手动触发）
+- [ ] `nomad update` —— 下载新版到 `runtime/dsh/<version>/`（SHA-256 校验沿打包流水线），
+      **完成后指向新版的仍是 current 指针改写**，旧版本目录保留 → 回滚天然可用
+- [ ] 备份自动化（可选）：start 时检查上次备份距今天数，超阈值在 `status` 提示（不自动执行）
+- [ ] 单测（registry 查询用注入的 fetch 替身，测试不碰网络）
+
+### 3.6 面板整合（把 3.1–3.5 的能力变成看得见的）
+
+- [ ] 状态端点扩展：profile 数/当前 profile、skill 数、存储用量摘要、可更新提示
+- [ ] 面板新增区块渲染上述数据（沿用 5-B 只读端点通道，低频轮询，ADR-0030）
+- [ ] 真机闭环：U 盘部署 → 全部新命令在盘上实跑 → 面板人眼确认（V1 验收清单同款标准）
+
+### Phase 3 验收总原则
+
+1. 每个子项完成 = 代码 + 单测 + 文档三件套齐，缺一不勾
+2. 所有新命令遵守现有 CLI 风格（`launcher/nomad.js` 分派 + `launcher/lib/` 纯函数拆分）
+3. 涉及 DSH 内部契约的结论必须先落 `DSH_SOURCE_MAP.md` 再写代码
+4. 阶段完成时更新 `VERSION` 的 `STAGE` 与本清单
 
 ---
 
