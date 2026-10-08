@@ -44,19 +44,19 @@ Nomad 不是从零开发的 Agent，而是构建在 **DeepSeek Harness（DSH）*
 
 ```mermaid
 flowchart TB
-    Browser["🌐 Browser<br/><i>Agent Screen</i>"]
+    Browser["🌐 Browser<br/>Agent Screen"]
 
     subgraph USB["💾 USB · Agent Home"]
         direction TB
-        Nomad["🧭 <b>Nomad</b><br/>Web UI · CLI · Launcher"]
-        App["🧩 Application Layer<br/>Projects · Memory · Skills · Profiles · Permissions"]
-        DSH["⚙️ <b>DeepSeek Harness (DSH)</b><br/>Agent Loop · Tools · MCP · Sessions · Models"]
-        RT["🔋 Portable Runtime<br/>Node + DSH · 版本化 · 可回滚"]
+        Nomad["🧭 Nomad<br/>Web UI · CLI · Launcher"]
+        App["🧩 Application Layer<br/>Projects · Memory · Skills<br/>Profiles · Permissions"]
+        DSH["⚙️ DeepSeek Harness<br/>Agent Loop · Tools · MCP<br/>Sessions · Models · Events"]
+        RT["🔋 Portable Runtime<br/>Node + DSH 版本化<br/>升级 · 回滚 · 重装"]
         Nomad --> App --> DSH --> RT
     end
 
     Browser --> Nomad
-    Host["🖥️ 宿主机<br/><i>进程级隔离 · 零污染</i>"] -.-> RT
+    Host["🖥️ 宿主机<br/>进程级隔离<br/>零污染"] -.-> RT
 ```
 
 > **Runtime 与 Data 物理分离**：`runtime/` 可替换、可升级、可回滚、可重新下载；
