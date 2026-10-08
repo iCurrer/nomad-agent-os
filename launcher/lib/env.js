@@ -20,8 +20,15 @@ const { isInside } = require('./paths.js')
  * 注意：**只影响子进程**。本模块绝不调用 setx / 注册表 / 系统环境 API。
  */
 
-/** 上游隔离先例使用的白名单（大小写不敏感匹配）。 */
-const DEFAULT_ALLOWLIST = ['path', 'systemroot', 'windir', 'comspec', 'pathext']
+/**
+ * 上游隔离先例使用的白名单（大小写不敏感匹配）。
+ *
+ * 相对上游 `test-host-updates.ts` 的 5 项，**多一项 `systemdrive`**：
+ * 该变量值是系统盘符（`C:`），无隐私；但缺失会让 `%SystemDrive%\…` 类路径在子进程里
+ * 展开失败、退化为相对路径并落到 cwd（Agent 工作区）。实测缺陷见 docs/HOST_ISOLATION.md
+ * 的「SystemDrive 例外」一节。配置层同样列出（config/nomad.yaml），此处为兜底保持一致。
+ */
+const DEFAULT_ALLOWLIST = ['path', 'systemroot', 'windir', 'comspec', 'pathext', 'systemdrive']
 
 /** 白名单缺失时的保底值（用于 host fallback 模式，仍尽量贴合上游配方）。 */
 function normalizeAllowlist(raw) {

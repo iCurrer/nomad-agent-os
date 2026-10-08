@@ -48,7 +48,7 @@ Nomad Launcher → 检测 USB Root → 检测 Runtime → 设置环境 →
 - [x] 浏览器交接（恒定 `--no-open`，用带 token 的 URL；2026-10-08 修正打开通道为 `cmd /c start` 并以退出码为判据，见 ADR-0022）
 - [x] 日志（监管日志 + DSH 原始输出）与状态文件（含心跳）
 - [x] 优雅退出（POSIX `SIGTERM`；Windows 走 `taskkill`，限制已记录）
-- [x] 体检 `nomad doctor`（只读：路径 / Secret / 目录 / 运行时 / 隔离 / 端口 / 宿主探针）
+- [x] 体检 `nomad doctor`（只读：路径 / Secret / 目录 / 运行时 / 隔离 / 端口 / 宿主探针 / **盘内字面量巡检**）
 - [x] 退出无残留进程（停止后状态清理；并带 PID 复用安全闸）
 - [x] **98 单元测试** + 12 步替身冒烟 + **18 步真实 DSH 冒烟** + 4 步安全闸，全部通过
 - [x] **打包运行时**：`runtime/node`（Node 22.23.3，SHA-256 与官方 `SHASUMS256.txt` 比对通过）
@@ -208,8 +208,10 @@ Nomad Launcher → 检测 USB Root → 检测 Runtime → 设置环境 →
 - [x] CLI（`nomad start/stop/restart/status/doctor/env/paths/logs/url/open/version` **+ 2026-10-08 新增
       `rollback` / `backup` / `restore` / `projects`**）
 - [x] Logs（监管日志 + DSH 原始输出 + 尾部查看）
-- [x] Doctor（只读体检，**16 项**：无实例时 15 通过 / 0 警告 / 1 跳过，有活实例时 16 通过；
-      含宿主污染探针、运行时包完整性（**锁文件对账**）、Nomad profile 巡检、浏览器交接命令、Web 认证握手）
+- [x] Doctor（只读体检，**17 项**：含宿主污染探针、**盘内字面量目录巡检**、运行时包完整性（**锁文件对账**）、
+      Nomad profile 巡检、浏览器交接命令、Web 认证握手）
+      > 2026-10-08 更新：新增第 17 项「盘内字面量目录巡检」（`scanLiteralDirs`）——
+      > 检出形如 `%VAR%` / `${VAR}` 的目录名（环境变量未展开的痕迹）。见 ADR-0033。
 - [x] **修复运行时残缺包**（4 个：`dsh-client-ui-sidebar-documentpreview`、`dsh-experimental-inspector`、
       `libreoffice-kit-win32-x64`、`@img/sharp-win32-x64`）—— **已修复并验证**。
       真实根因（**更正**：原先记的「打包期被中断的 npm install」是错归因）：

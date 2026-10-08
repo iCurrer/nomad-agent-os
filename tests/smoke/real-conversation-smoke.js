@@ -123,7 +123,7 @@ function makeEnv(home, tmp) {
     isolation: {
       enabled: true,
       strategy: 'allowlist',
-      inherit_allowlist: ['path', 'systemroot', 'windir', 'comspec', 'pathext'],
+      inherit_allowlist: ['path', 'systemroot', 'windir', 'comspec', 'pathext', 'systemdrive'],
       override: {
         DSH_HOME: home,
         HOME: home,

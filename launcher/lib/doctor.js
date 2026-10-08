@@ -33,6 +33,53 @@ const FAIL = 'fail'
 const SKIP = 'skip'
 
 /**
+ * 巡检盘内目录名里的「未展开环境变量」痕迹（**只读**）。
+ *
+ * 形态：`%VAR%`（Windows）或 `${VAR}`（POSIX）。刻意**不含**裸 `$VAR` —— 那种形态
+ * 误报率太高（任何含 `$` 的目录名都会命中）。
+ *
+ * 为什么要有这一项：实测在 `workspace/` 下出现过
+ * `%SystemDrive%/ProgramData/Microsoft/Windows/Caches/`。目录名里的 `%` 没被展开，
+ * 说明某进程把环境变量当**字面量**拼进了路径，于是以该进程 cwd（Agent 工作区）为基准落盘。
+ * 真凶**不在** Nomad 与已打包运行时之内（全量搜该字面量 0 命中），故**不臆断来源**，
+ * 改为提供可观测防线：无论谁写进来，体检都会报出来。
+ *
+ * @param {string} root - NOMAD_ROOT
+ * @returns {string[]} 命中的相对路径（深度优先，命中即不再深入）
+ */
+function scanLiteralDirs(root) {
+  const PATTERN = /%[A-Za-z_][A-Za-z0-9_]*%|\$\{[A-Za-z_][A-Za-z0-9_]*\}/
+  /** 跳过：体量大或不该被巡检的目录（保体检快速）。 */
+  const SKIP = new Set(['node_modules', 'runtime', 'vendor', '.cache-dev', '.git', 'tmp'])
+  const SCAN_ROOTS = ['workspace', 'data', 'profiles', 'skills', 'mcp']
+  const MAX_DEPTH = 4
+  const found = []
+
+  const walk = (dir, depth) => {
+    if (depth > MAX_DEPTH) return
+    let entries
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return // 不存在或无权限：静默跳过（体检只报事实，不报"读不到"的噪音）
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const full = path.join(dir, entry.name)
+      if (PATTERN.test(entry.name)) {
+        found.push(path.relative(root, full))
+        continue // 命中即可疑子树，不再深入
+      }
+      if (SKIP.has(entry.name)) continue
+      walk(full, depth + 1)
+    }
+  }
+
+  for (const rel of SCAN_ROOTS) walk(path.join(root, rel), 1)
+  return found.sort()
+}
+
+/**
  * 运行体检。
  *
  * **只读保证**：本函数不创建目录、不写状态文件、不改任何配置。
@@ -260,6 +307,21 @@ async function runDoctor(options) {
     add('host-probe', '宿主污染探针', PASS, `宿主 ${hostDsh} 不存在（符合预期）`)
   }
 
+  // 13b. 盘内字面量目录巡检（未展开环境变量的痕迹）
+  //   与上一项互补：上一项查**宿主**被污染，这一项查**盘内**被非预期写入。
+  const literalDirs = scanLiteralDirs(root)
+  if (literalDirs.length > 0) {
+    add(
+      'literal-dirs',
+      '盘内字面量目录巡检',
+      WARN,
+      literalDirs.map((p) => `发现：${p}`).join('\n'),
+      '目录名里的 %VAR% / ${VAR} 未被展开，说明某进程把环境变量当字面量拼进了路径，并以它自己的 cwd 为基准落了盘。Nomad 自身与已打包运行时均无此写法（全量搜字面量 0 命中），故不臆断来源；请确认后清理，并留意是否再次出现。',
+    )
+  } else {
+    add('literal-dirs', '盘内字面量目录巡检', PASS, '未发现未展开的环境变量形态目录名')
+  }
+
   // 14. 当前实例
   const state = readState(root)
   if (state === null) {
@@ -377,4 +439,4 @@ function renderDoctor(report) {
   return lines.join('\n')
 }
 
-module.exports = { runDoctor, renderDoctor, PASS, WARN, FAIL, SKIP }
+module.exports = { runDoctor, renderDoctor, scanLiteralDirs, PASS, WARN, FAIL, SKIP }

@@ -46,7 +46,7 @@ test('隔离策略为白名单且启用', () => {
   const config = loadConfig({ root: ROOT })
   assert.equal(config.isolation.enabled, true)
   assert.equal(config.isolation.strategy, 'allowlist')
-  assert.deepEqual(config.isolation.inherit_allowlist, ['path', 'systemroot', 'windir', 'comspec', 'pathext'])
+  assert.deepEqual(config.isolation.inherit_allowlist, ['path', 'systemroot', 'windir', 'comspec', 'pathext', 'systemdrive'])
 })
 
 test('端口不写死、host 只允许回环、DSH 入口走 node-entry', () => {

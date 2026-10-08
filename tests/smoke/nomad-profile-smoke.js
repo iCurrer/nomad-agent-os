@@ -116,7 +116,7 @@ function scratchEnv() {
     isolation: {
       enabled: true,
       strategy: 'allowlist',
-      inherit_allowlist: ['path', 'systemroot', 'windir', 'comspec', 'pathext'],
+      inherit_allowlist: ['path', 'systemroot', 'windir', 'comspec', 'pathext', 'systemdrive'],
       override: {
         DSH_HOME: SCRATCH_HOME,
         HOME: SCRATCH_HOME,

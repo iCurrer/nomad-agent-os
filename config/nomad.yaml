@@ -97,6 +97,13 @@ isolation:
     - windir
     - comspec
     - pathext
+    # systemdrive：值为系统盘符（`C:`），无隐私、不指向用户目录，对隔离强度影响可忽略。
+    # 但**必须继承** —— 否则 `%SystemDrive%\...` 类路径在子进程里展开失败，会退化成
+    # **相对路径**并以 cwd（Agent 工作区）为基准落盘。实测缺陷：Windows 兼容性机制在
+    # 缺此变量时，把 `%SystemDrive%\ProgramData\Microsoft\Windows\Caches\`（系统缓存库）
+    # 重建到了 `workspace/%SystemDrive%/…` 下（4 个文件 / ~966 KB）。
+    # 依据见 docs/HOST_ISOLATION.md §「SystemDrive 例外」。
+    - systemdrive
   # 进程级强制覆盖；仅作用于子进程，禁止修改系统环境变量
   # 相对值按 NOMAD_ROOT 解析（见 isolation.resolve_relative_to_root）
   override:

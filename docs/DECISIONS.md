@@ -1003,3 +1003,48 @@ L1 单元（~1 s）/ L2 本机实例（~5 s）/ L3 盘上真机（~1 s + ~5 s）
 - 验证：`tests/runtime-rollback.test.js` 5/5、`tests/backup.test.js` 5/5、`tests/projects.test.js` 3/3；
   真实 CLI 三命令在 `/d/u盘` 实跑通过（projects 列出 default-workspace/2 会话；rollback 列出当前 0.2.1-alpha.1；
   backup 落盘 22 个文件）。
+
+---
+
+## ADR-0033 隔离白名单增补 `systemdrive`（声明性对齐）+ 盘内字面量目录巡检（可观测防线）
+
+- 日期：2026-10-08
+- 状态：accepted（已实现；单元 **168/168** 全绿，新增 8 例巡检单测；doctor 由 16 项增至 **17 项**）
+- 背景：在做开源前审计时，于盘内发现字面量目录
+  `workspace/%SystemDrive%/ProgramData/Microsoft/Windows/Caches/`（4 文件 / ≈966 KB），
+  内容为 **Windows 兼容性/字体缓存库**（文件名与系统侧 `C:\ProgramData\Microsoft\Windows\Caches\`
+  一一对应、版本号为初始值 → 是**重建**而非复制）。
+- **调查过程与自我纠错（本 ADR 的核心价值）**：
+  1. 初判「白名单缺 `SystemDrive` → `%SystemDrive%` 展开失败 → 退化为相对路径落到 cwd」，
+     逻辑自洽且证据链看似完整（时间对得上、文件名一一对应），**随即实施"修复"**。
+  2. **但反向验证推翻了它**：用隔离配置构造子进程并**直接读 `process.env`**，发现
+     `env={}`（完全空）时子进程**仍能看到** `SystemDrive="C:"`、`SystemRoot`、`USERPROFILE`、`TEMP`
+     —— Windows 创建进程时会**自动补全/注入系统关键变量**，白名单拦不住。
+     故「环境里没有该变量」这一前提不成立，原因果链**作废**。
+  3. 真凶逐一排除后**不在可控范围**：全量搜字面量 `%SystemDrive%` 在 `runtime/` 与 Nomad 侧
+     0 命中；`libreoffice-kit-win32-x64` 系误判（命中的是 C++ 符号名 `GrGLSLProgramDataManager`，
+     不是路径）；`@modelcontextprotocol/client` 只是**声明要继承**该变量；`node-gyp` 有 `|| 'C:'` 兜底。
+- 决策（两条，均不依赖"定位真凶"）：
+  1. **白名单增补 `systemdrive`**（`config/nomad.yaml` + `launcher/lib/env.js#DEFAULT_ALLOWLIST`）——
+     明确定性为**声明性对齐，不是安全修复**：上游 `@modelcontextprotocol/client` 的
+     `DEFAULT_INHERITED_ENV_VARS`（win32）明确列出 `SYSTEMDRIVE`，生态本就期望它在场；
+     该值仅为盘符（`C:`），无隐私、对隔离强度影响可忽略。
+  2. **新增 doctor 第 17 项「盘内字面量目录巡检」**（`launcher/lib/doctor.js#scanLiteralDirs`）——
+     扫 `workspace/ data/ profiles/ skills/ mcp/` 下形如 `%VAR%` / `${VAR}` 的目录名并告警；
+     命中即不再深入、跳过 `node_modules/runtime/vendor/.cache-dev/.git/tmp`、深度上限 4。
+     与既有「宿主污染探针」互补：**前者查宿主被写，后者查盘内被非预期写**。
+- 放弃的方案：① 继续深挖真凶并做"精确修复" —— 创建者不在 Nomad 与打包运行时之内，
+  继续投入属**不可控范围**的考古；改为提供**可观测防线**，任何来源的此类污染都能被发现。
+  ② 只用裸 `$VAR` 形态也匹配 —— 误报率过高（任何含 `$` 的目录名都会命中），只保留
+  `%VAR%` 与 `${VAR}` 两种明确形态。③ 把已生成的子树直接删除 —— 改为隔离到
+  `data/tmp/quarantine/`，保留可恢复性与取证可能，清理由维护者确认。
+- 后果（正面）：① 澄清了白名单的**真实边界**（管得住普通变量、管不住 Windows 注入的系统变量），
+  同时**确认敏感变量确实被隔离**（宿主 `DEEPSEEK_API_KEY` len=35 → 子进程为 `null`），
+  §1 的隔离结论**依然成立**；② 新增防线不依赖根因，属长期有效资产；
+  ③ 沉淀了一条方法论：**不要止步于"解释得通"的假设，必须做反向验证**。
+- 后果（负面 / 代价）：doctor 每次体检多一次浅层目录遍历（已用深度上限 + 跳过名单控制）；
+  字面量目录的**源头仍未定位**，若再次出现只能发现而不能阻止。
+- 验证：对照实验（空 env 子进程可见系统变量 / 传入值被尊重 / `cmd /c echo %VAR%` 被证明为**无效测法**）；
+  `tests/doctor-literal-dirs.test.js` 8/8（含"命中不再深入""跳过重目录""不误报 `100%done`/`a%b`""深度上限"）；
+  `tests/env.test.js` 新增回归用例锁死 `SystemDrive` 不得被移出白名单；全量 **168/168**；
+  真实 `nomad doctor` 17 项全通过。

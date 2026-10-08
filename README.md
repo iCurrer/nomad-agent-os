@@ -69,7 +69,7 @@ Agent 引擎 [`@deepseek-ai/dsh`](https://github.com/deepseek-ai/deepseek-harnes
 ## 快速开始（Phase 1 启动器）
 
 ```bash
-# 体检：路径 / Secret / 目录 / 运行时 / 隔离 / 端口 / 宿主污染探针（只读）
+# 体检：路径 / Secret / 目录 / 运行时 / 隔离 / 端口 / 宿主污染探针 / 盘内字面量巡检（只读）
 nomad doctor
 
 # 只看启动计划，不启动任何进程（含完整 argv 与隔离计划）

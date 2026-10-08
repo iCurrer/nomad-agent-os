@@ -79,11 +79,63 @@ const child = spawn(process.execPath, [script, root], {
 
 要点（Nomad 直接照抄）：
 
-1. **白名单而非黑名单**：只保留 `path / systemroot / windir / comspec / pathext` 五个 Windows 必需变量，**其余全部不继承**。比逐个排除更彻底。
+1. **白名单而非黑名单**：只保留 `path / systemroot / windir / comspec / pathext / systemdrive` 六个变量（末位为本项目**增补**，理由见 §4.1），**其余全部不继承**。比逐个排除更彻底。
 2. 显式覆盖 `DSH_HOME`、`USERPROFILE`、`HOME`、`TEMP`、`TMP`、`TMPDIR`。
 3. **`cwd` 也设为私有根** —— 因为「调用目录」是默认 workspace root。
 4. 未设置 `APPDATA` / `LOCALAPPDATA`：源码中这两个变量**只被读、不被写**（仅 `packages/host/open-in-app/src/catalog.ts` 用于探测宿主编辑器），所以不需要搬走。
 5. 源码级隔离手段，本项目在 `runtime/launcher/` 中实现为**进程级**，绝不写系统环境变量。
+
+### 4.1 白名单的真实边界（2026-10-08 实测，**推翻了此前的想当然**）
+
+实测方法：用隔离配置构造子进程环境，再在子进程里**直接读 `process.env`**
+（注意：`cmd /c echo %VAR%` 是**无效测法** —— cmd 的展开有自己的解析路径，不反映进程环境真相）。
+
+| 传给子进程的 env | 子进程实际可见 |
+| --- | --- |
+| `{}`（**完全空**） | `SystemDrive="C:"`、`SystemRoot="C:\WINDOWS"`、`USERPROFILE="C:\Users\<user>"`、`TEMP=…\Temp` |
+| `{Path}` 等部分变量 | 同上 —— 缺的那些被补上了 |
+| `{SystemDrive:"ZZ:"}` | `"ZZ:"`（**传入值被尊重**，不被覆盖） |
+
+**两条结论**：
+
+1. **Windows 在创建进程时会自动补全/注入系统关键变量**，白名单**拦不住**这一类。
+   所以「环境里没有 `SystemDrive`」这种状态**不会出现** —— 依赖它做的推断都是错的。
+2. **但真正要防的敏感变量确实被防住了** ✅：
+   宿主有 `DEEPSEEK_API_KEY`（len=35），而**子进程里为 `null`**。
+   → §1 的核心结论（`HOST_ISOLATION.md` 的隔离有效性）**依然成立**；
+   白名单只放行了被 override 的项，系统变量被补全属既定行为，**不是泄漏**。
+
+**`systemdrive` 为何仍加入白名单**：这是**声明性对齐**，不是安全修复 ——
+上游 `@modelcontextprotocol/client` 的 `DEFAULT_INHERITED_ENV_VARS`（win32 分支）**明确列出**
+`SYSTEMDRIVE`，即生态本就期望该变量在场。显式列出便于阅读，且与上游期望一致。
+
+### 4.2 已知缺陷：字面量目录「`%VAR%`」被写入盘内
+
+**现象**：`workspace/%SystemDrive%/ProgramData/Microsoft/Windows/Caches/`
+下出现 4 个文件（≈966 KB），正是 Windows 兼容性/字体缓存库
+（`cversions.2.db` 等；文件名与系统侧 `C:\ProgramData\Microsoft\Windows\Caches\` 一一对应，
+但版本号是初始值 → 是**重建**而非复制）。
+
+**成因（已确认为"路径未展开"）**：某进程把 `%SystemDrive%\…` 当**字面量**拼进路径，
+未做展开，于是以该进程 cwd（= Agent 工作区 `workspace/`）为基准落了盘。
+
+**真凶（已逐一排除，未最终定位）**：
+- 全量搜字面量 `%SystemDrive%`：`runtime/` 与 Nomad 侧（launcher/tests/tools）**均 0 命中**；
+- `@deepseek-ai/libreoffice-kit-win32-x64` 曾疑似（`grep ProgramData` 命中），
+  实为 C++ 符号名 `GrGLSLProgramDataManager`，**不是路径**；
+- `@modelcontextprotocol/client`：只是**声明要继承**该变量（见 §4.1），不产生字面量；
+- `node-gyp`：`process.env.SystemDrive || 'C:'`，**有兜底**。
+
+→ 结论：创建者**不在 Nomad 与已打包运行时之内**（很可能是 Windows 侧组件在不完整环境块下
+`ExpandEnvironmentStrings` 保留未展开字面量所致）。**不臆断，不编造来源。**
+
+**防线（可观测，不依赖定位真凶）**：`nomad doctor` 新增
+**「盘内字面量目录巡检」**（`launcher/lib/doctor.js#scanLiteralDirs`）——
+扫描 `workspace/ data/ profiles/ skills/ mcp/` 下形如 `%VAR%` / `${VAR}` 的目录名并告警
+（命中即不再深入；跳过 `node_modules/runtime/vendor/.cache-dev/.git/tmp`；深度上限 4）。
+
+**处置**：已把该子树隔离到 `data/tmp/quarantine/wrongly-written-systemdrive-2026-10-08/`
+（保留可恢复性）。清理由维护者确认；`workspace/` 已恢复为空。
 
 ---
 
