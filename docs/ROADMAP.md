@@ -224,11 +224,18 @@ Nomad Launcher → 检测 USB Root → 检测 Runtime → 设置环境 →
 - [x] Backup（**2026-10-08 收尾**：`nomad backup` 把 `data/dsh-home` 零依赖递归复制到
       `data/backups/nomad-backup-<ts>/` 并附 `backup-manifest.json`；`nomad restore` 合并回放。依据 ADR-0032）
 - [~] Typecheck / Lint（本项目无 TS/构建工具链；以 `node --test` 单元测试 + 冒烟测试替代，见 §Quality Gate 说明）
-- [x] Test（**111 单元测试 / 12 步替身冒烟 / 20 步真实冒烟（含零告警 + 前端资源全量 + 认证三闸 +
+- [x] Test（**159 单元测试 / 12 步替身冒烟 / 20 步真实冒烟（含零告警 + 前端资源全量 + 认证三闸 +
       L2 客户端插件四查 + Nomad 自有面板三查）/ 4 步安全闸 / 9 步 L4-a patch 探针 / 8 步 L4-a bundle 探针 /
       9 步自举 profile 真实冒烟 / 只读 UI 资源巡检**）
 - [x] Build（运行时打包完成并通过 SHA-256 校验；打包产物经真实冒烟验证可运行）
 - [x] Portable Smoke Test（`tests/smoke/portable-smoke.js` 替身 + `real-runtime-smoke.js` 真实）
+- [x] **开源发布** —— **2026-10-08 已上线**：公开仓库
+      [**iCurrer/nomad-agent-os**](https://github.com/iCurrer/nomad-agent-os)（**MIT**，Copyright (c) 2026 iCurrer），
+      首推提交 `d2dd64a`（97 文件 / 17,925 行 / 854 KB）。合规四件套齐备：`LICENSE`、
+      `THIRD_PARTY_NOTICES.md`（561 个传递依赖，**无 GPL/AGPL 强 copyleft**，MIT 发布无传染）、
+      `.gitattributes`、README「归属与许可」章节；上游 DSH 亦为 MIT；**Core Patch 数 = 0**。
+      入库红线（已逐项核验线上确实不含）：`data/`（含明文凭据）、`runtime/`(664M)、`vendor/`、
+      `.cache-dev/`、`.workbuddy/`。
 
 ---
 
