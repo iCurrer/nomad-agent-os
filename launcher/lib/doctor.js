@@ -24,7 +24,7 @@ const {
   countLockedPackages,
   findNodeModulesDir,
 } = require('./runtime.js')
-const { inspectNomadProfile } = require('./profile.js')
+const { inspectNomadProfile, listProfiles } = require('./profile.js')
 
 /** 状态标识。 */
 const PASS = 'pass'
@@ -257,6 +257,38 @@ async function runDoctor(options) {
       FAIL,
       error instanceof Error ? error.message : String(error),
       '检查 config/nomad.yaml 的 runtime.dsh.profile / profile_template / bundle_source',
+    )
+  }
+
+  // 9b. 全部 profile 巡检（Phase 3.1，第 18 项；只读，不创建不修改）
+  //     逐个目录校验清单与伴生文件；清单级问题 = FAIL，目录缺失态 = WARN。
+  try {
+    const scan = listProfiles({ root, config })
+    const bad = scan.profiles.filter((item) => item.problems.length > 0)
+    if (scan.profiles.length === 0) {
+      add('profiles-all', '全部 profile 巡检', WARN, 'profiles/ 下没有任何 profile —— start 会按内置模板自动创建')
+    } else if (bad.length === 0) {
+      const names = scan.profiles
+        .map((item) => `${item.name}${item.kind === 'default' ? '(默认)' : ''}`)
+        .join(', ')
+      add('profiles-all', '全部 profile 巡检', PASS, `${scan.profiles.length} 个 profile 全部有效：${names}`)
+    } else {
+      const lines = bad.map((item) => `${item.name}: ${item.problems.join('；')}`)
+      add(
+        'profiles-all',
+        '全部 profile 巡检',
+        FAIL,
+        `${bad.length}/${scan.profiles.length} 个 profile 有问题\n${lines.join('\n')}`,
+        '单看详情：nomad profile list / nomad profile validate <name>',
+      )
+    }
+  } catch (error) {
+    add(
+      'profiles-all',
+      '全部 profile 巡检',
+      FAIL,
+      error instanceof Error ? error.message : String(error),
+      '检查 profiles 目录权限 / 磁盘状态',
     )
   }
 

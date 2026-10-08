@@ -195,12 +195,19 @@ Launcher 自举 `nomad` profile 已被真实 DSH 加载；`web` 是**内置保�
 （`profile-boot.ts:116-131`）；profile 结构 = `package.json`（bundles 相对 profile 目录）
 + `cordis.yml`（恒 `[]`）+ `cordis.patch.yml`（insert: group 三键缺一不可）。
 
-- [ ] `nomad profile list` —— 列出全部 profile + 哪个是当前启动用的 + 来源（自举/引擎/用户）
-- [ ] `nomad profile create <name>` —— 从模板生成合法骨架（校验保留名、名字合法性）
-- [ ] `nomad profile validate <name>` —— 结构校验（package.json 可解析、bundles 路径存在、
-      patch 语法三键齐全），集成进 `doctor` 第 18 项
-- [ ] 启动选择：`nomad start --profile <name>`（默认仍 `nomad`）
-- [ ] 单测 + 替身冒烟覆盖上述每条
+- [x] `nomad profile list` —— 列出全部 profile + 哪个是当前启动用的 + 来源（自举/引擎/用户）
+      **（2026-10-09 完成**：真实盘列出 headless/nomad/web 三个全部有效，default 打标）
+- [x] `nomad profile create <name>` —— 从模板生成合法骨架（校验保留名、名字合法性）
+      **（2026-10-09 完成**：4 文件骨架与上游 `initProfile` 形状一致；已存在即拒绝绝不覆盖；
+      实测中一次「刚建就说已存在」的怪象定性为**沙箱拦截部分写盘 + 提权重试撞残留**，非代码缺陷）
+- [x] `nomad profile validate <name>` —— 结构校验（package.json 可解析、bundles 路径存在、
+      patch 语法），集成进 `doctor` 第 18 项 —— **（2026-10-09 完成**，doctor 18 项全通过；
+      含一个重要发现：上游模板 patch 文件是流式 `[]`，`yaml-lite` 只支持块式 →
+      校验器短路兼容，不改公共解析器）
+- [x] 启动选择：`nomad start --profile <name>`（默认仍 `nomad`）—— **（2026-10-09 完成**：
+      dry-run 实测 argv 正确携带覆盖名；保留名/路径分隔符在启动前即拒绝）
+- [x] 单测 + 替身冒烟覆盖上述每条 —— **（2026-10-09 完成**：`tests/profiles.test.js` 9 例，
+      全量 **177/177 全绿**）
 
 ### 3.2 Skills 管理（依赖 3.0 的契约结论）
 
@@ -215,6 +222,16 @@ Launcher 自举 `nomad` profile 已被真实 DSH 加载；`web` 是**内置保�
 ### 3.3 Memory / 数据面管理（依赖 3.0 的存储全景）
 
 现状：`nomad projects` 已能读 `workspace.json`；sessions 落盘格式已验证（阶段 3.5）。
+**3.0-B 勘探结论（2026-10-09 实测，全盘 data/ 仅 ≈5 MB）**：
+
+| 归属 | 目录 | 实测 | 3.3 处置 |
+| --- | --- | --- | --- |
+| 长期-核心 | `dsh-home/sessions` `dsh-home/storages` `dsh-home/profiles` | 28.9 KB / 16.6 KB / 2.2 KB | **永不清理**，备份覆盖 |
+| 长期-引擎私有 | `dsh-home/AppData`（HOME 重定向产物）`dsh-home/Documents` | 1.5 KB / 空 | 不清理 |
+| 半长期 | `logs/`（诊断）`backups/` | 96.6 KB / 22.5 KB | 可轮转，不在 3.3 范围 |
+| 运行时态 | `run/` | 1.5 KB | 生命周期管理已覆盖 |
+| **可清理** | `data/tmp/`（quarantine / smoke 残留 / 引擎 `dsh-acl-skill-*` 临时目录）`dsh-home/tmp` | **4.3 MB / 393 文件** | `storage clean` 白名单目标 |
+| 增长源观察 | 引擎每次运行生成 `dsh-acl-skill-*`（实测已有 5 个同型 51 KB 目录） | — | clean 需按前缀+时间规则清 |
 
 - [ ] `nomad storage` —— 盘内数据全景报告：各目录体积/文件数/最近写入时间，
       区分「长期数据」（sessions/workspace/profiles）与「可清理」（tmp/AppData 缓存）
@@ -226,6 +243,13 @@ Launcher 自举 `nomad` profile 已被真实 DSH 加载；`web` 是**内置保�
 ### 3.4 Permissions 落地（依赖 3.0 的消费方勘探结论）
 
 现状：`config/permissions.yaml` 是完整模板（8 级 + never 硬禁止清单），**但无任何代码消费它**。
+**3.0-C 勘探结论（2026-10-09 源码级）**：上游有完整原生权限体系 —— 两个正交旋钮
+`SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'`
+（`sandbox/sandbox-policy/src/session-mode.ts:42`）× `ApprovalPolicy = 'ask' | 'never'`
+（`interaction/user-approval/src/index.ts:70`），由 `permission-presets` 服务组合成
+用户档位（`/permission` 命令写入 + settings `defaultPreset`；sandbox 切换本身是
+事件溯源的 `sandbox/mode` session 事件）。**Nomad 的 8 级模型与上游不对应，
+禁止 launcher 侧自造桥接改写上游旋钮**（会对抗其事件溯源设计）。
 
 - [ ] 按 3.0 结论接线：launcher 在 `--dry-run` 与 `doctor` 中展示生效的权限档位（最低限度）；
       若上游有原生 approval 机制则评估桥接而非自造
@@ -289,7 +313,7 @@ Launcher 自举 `nomad` profile 已被真实 DSH 加载；`web` 是**内置保�
 - [x] CLI（`nomad start/stop/restart/status/doctor/env/paths/logs/url/open/version` **+ 2026-10-08 新增
       `rollback` / `backup` / `restore` / `projects`**）
 - [x] Logs（监管日志 + DSH 原始输出 + 尾部查看）
-- [x] Doctor（只读体检，**17 项**：含宿主污染探针、**盘内字面量目录巡检**、运行时包完整性（**锁文件对账**）、
+- [x] Doctor（只读体检，**18 项**：含宿主污染探针、**盘内字面量目录巡检**、**全部 profile 巡检（3.1）**、运行时包完整性（**锁文件对账**）、
       Nomad profile 巡检、浏览器交接命令、Web 认证握手）
       > 2026-10-08 更新：新增第 17 项「盘内字面量目录巡检」（`scanLiteralDirs`）——
       > 检出形如 `%VAR%` / `${VAR}` 的目录名（环境变量未展开的痕迹）。见 ADR-0033。

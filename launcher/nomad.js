@@ -18,7 +18,11 @@
  *   nomad doctor [--json]      体检（退出码：0 全通过 / 1 有 FAIL）
  *   nomad env                  打印隔离环境计划
  *   nomad paths                打印解析后的路径与运行时
- *   nomad profile [--ensure]   查看自建 profile（--ensure 时自举到位）
+ *   nomad profile              查看自建 profile（--ensure 时自举到位）
+ *   nomad profile list         列出盘内全部 profile
+ *   nomad profile create <name> [--template T]   从内置模板创建骨架
+ *   nomad profile validate <name>                深度校验单个 profile
+ *   nomad start [--profile <name>]   覆盖本次启动使用的 profile（默认仍 nomad）
  *   nomad logs [--raw] [--lines N]
  *   nomad url                  打印带 token 的访问地址（敏感）
  *   nomad open                 重新用浏览器打开当前实例
@@ -43,7 +47,7 @@ const { parseWorkspaces } = require('./lib/projects.js')
 const { buildEnv, describePlan } = require('./lib/env.js')
 const { redactEnv, localDate } = require('./lib/logger.js')
 const { ensureDirs, buildArgv } = require('./lib/bootstrap.js')
-const { ensureNomadProfile, inspectNomadProfile } = require('./lib/profile.js')
+const { ensureNomadProfile, inspectNomadProfile, listProfiles, createProfile, validateProfileDir, validateProfileName } = require('./lib/profile.js')
 const { readState, clearState, isAlive, isFresh, stateFile } = require('./lib/state.js')
 const { sanitizeUrl } = require('./lib/dsh-url.js')
 const { probeHttp } = require('./lib/probe.js')
@@ -337,6 +341,18 @@ function describeHandoff(handoff) {
  */
 async function cmdStart(flags) {
   const ctx = resolveContext(flags)
+  // Phase 3.1：CLI 级 profile 覆盖（优先于 config.runtime.dsh.profile）。
+  // 只影响本次启动；校验复用 profile.js 的守卫（保留名/路径分隔符一律拒绝）。
+  const profileOverride = flagValue(flags, 'profile')
+  if (profileOverride !== undefined) {
+    try {
+      validateProfileName(profileOverride)
+    } catch (error) {
+      console.error(`启动中止：${error instanceof Error ? error.message : String(error)}`)
+      return 1
+    }
+    ctx.config.runtime.dsh.profile = profileOverride
+  }
   const foreground = flagBool(flags, ['foreground', 'f'])
   const openBrowser = !flagBool(flags, ['no-browser'])
   const timeoutMs = Number(flagValue(flags, 'timeout')) || DEFAULT_READY_TIMEOUT_MS
@@ -796,6 +812,83 @@ async function main() {
     }
     case 'profile': {
       const ctx = resolveContext(flags)
+      // 与 rollback/restore 同约定：positionals[0] 是命令本身，子命令从 [1] 起。
+      const sub = positionals[1]
+
+      // -- profile list：列出盘内全部 profile（Phase 3.1）
+      if (sub === 'list') {
+        const scan = listProfiles({ root: ctx.root, config: ctx.config })
+        console.log(`profile 根目录  ${scan.base}`)
+        console.log(`启动默认        ${scan.defaultName}`)
+        console.log(`内置保留名（模板，不在盘内列举）  ${scan.reserved.join(' / ')}`)
+        if (scan.profiles.length === 0) {
+          console.log('盘内暂无 profile —— start 会按模板自动创建。')
+          break
+        }
+        console.log('')
+        for (const item of scan.profiles) {
+          const tag = item.kind === 'default' ? ' [启动默认]' : ''
+          const state = item.problems.length === 0 ? '有效' : `⚠ ${item.problems.length} 个问题`
+          console.log(`${item.name}${tag}  ${state}`)
+          for (const problem of item.problems) console.log(`    - ${problem}`)
+        }
+        break
+      }
+
+      // -- profile create <name> [--template <内置名>]：创建骨架（绝不覆盖已有内容）
+      if (sub === 'create') {
+        const name = positionals[2]
+        if (typeof name !== 'string' || name === '') {
+          console.error('用法：nomad profile create <name> [--template acp|web|headless|sdk|sdk-minimal]')
+          code = 1
+          break
+        }
+        const template = flagValue(flags, 'template') ?? 'web'
+        const result = createProfile({ root: ctx.root, config: ctx.config }, name, template)
+        if (!result.ok) {
+          console.error(`创建失败：${result.error}`)
+          code = 1
+          break
+        }
+        console.log(`profile「${result.name}」已创建（派生自 ${result.template}）：${result.dir}`)
+        console.log(`  bundles: ${result.bundles.join(', ')}`)
+        for (const file of result.created) console.log(`  + ${file}`)
+        break
+      }
+
+      // -- profile validate <name>：深度校验单个 profile
+      if (sub === 'validate') {
+        const name = positionals[2]
+        if (typeof name !== 'string' || name === '') {
+          console.error('用法：nomad profile validate <name>')
+          code = 1
+          break
+        }
+        const dir = path.join(ctx.config.paths.dsh_home, 'profiles', name)
+        const check = validateProfileDir(dir)
+        if (!check.exists) {
+          console.error(`profile「${name}」不存在：${check.dir}`)
+          code = 1
+          break
+        }
+        console.log(`profile ${name}  ${check.dir}`)
+        console.log(`  bundles(${check.bundles.length}): ${check.bundles.join(', ') || '(无)'}`)
+        if (check.problems.length === 0) {
+          console.log('  结论：有效')
+        } else {
+          console.log('  结论：存在问题')
+          for (const problem of check.problems) console.log(`    - ${problem}`)
+          code = 1
+        }
+        break
+      }
+
+      if (sub !== undefined) {
+        console.error(`未知子命令「${sub}」。可用：list / create <name> / validate <name>；无参数 = 查看 ${ctx.config.runtime?.dsh?.profile ?? 'nomad'} 自建层。`)
+        code = 1
+        break
+      }
+
       if (flagBool(flags, ['ensure'])) {
         const result = ensureNomadProfile({ root: ctx.root, config: ctx.config, logger: console })
         if (!result.ok) {

@@ -34,6 +34,30 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const { assertInside, resolveInside } = require('./paths.js')
+const { parse: parseYaml } = require('./yaml-lite.js')
+
+/**
+ * 读 YAML 文件顶层数组（供 profile 校验用）。
+ *
+ * 上游模板的 `cordis.patch.yml` / `cordis.yml` 正文是**流式空数组 `[]`**
+ * （`dsh-app-boot/lib/index.js:563-567` 模板原文），而 `yaml-lite.js` 只支持
+ * 块式语法、对 `[]` 会抛错。因此这里先剥注释行、trim，命中 `[]` 直接短路返回，
+ * 其余交 yaml-lite 解析 —— 不为这一个形态去改公共解析器。
+ *
+ * @param {string} file - YAML 文件路径
+ * @returns {unknown} 解析结果（调用方自行断言数组）
+ * @throws {Error} 文件不可读或 YAML 不可解析时
+ */
+function readYamlTopArray(file) {
+  const text = fs.readFileSync(file, 'utf8')
+  const stripped = text
+    .split(/\r?\n/)
+    .filter((line) => !line.trimStart().startsWith('#'))
+    .join('\n')
+    .trim()
+  if (stripped === '[]') return []
+  return parseYaml(stripped)
+}
 
 /**
  * 上游内置（＝保留）profile 名 → 其模板 bundle 列表。
@@ -372,12 +396,185 @@ function ensureNomadProfile(options) {
   return { ok: true, action, name: spec.name, dir: spec.dir, bundleSpec: spec.bundleSpec, created, updated }
 }
 
+/**
+ * 校验单个 profile 目录（**通用**，不只 `nomad` 自建层；只读，Phase 3.1）。
+ *
+ * 校验面与放行标准：
+ *   - `package.json` 必须可解析且为对象、含非空字符串数组 `dsh.profile.bundles`
+ *     —— 这是 profile 能被 DSH 加载的最低要求，缺了 = FAIL；
+ *   - bundle spec 仅在显式相对形态（`./` `../` 开头）时做**存在性**检查
+ *     （scoped npm 包名同样含 `/`，不能按分隔符猜，见 AGENTS.md 铁律 20 的辨析）；
+ *   - `cordis.patch.yml` / `cordis.yml` 存在时必须可解析、patch 顶层数组；
+ *     **缺失不算问题** —— 上游 `initProfile` 每次启动都会补缺失文件（existsSync 守卫）。
+ *
+ * @param {string} dir - profile 目录（`<DSH_HOME>/profiles/<name>`）
+ * @returns {{ dir: string, exists: boolean, manifestValid: boolean, bundles: string[], problems: string[] }} 校验结果
+ */
+function validateProfileDir(dir) {
+  const result = { dir, exists: false, manifestValid: false, bundles: [], problems: [] }
+  if (!fs.existsSync(dir)) {
+    result.problems.push('目录不存在')
+    return result
+  }
+  result.exists = true
+
+  // ① 清单（唯一的 FAIL 面：缺它 profile 无法加载）
+  const manifestPath = path.join(dir, 'package.json')
+  let manifest = null
+  try {
+    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+    if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest)) {
+      result.problems.push('package.json 必须是 JSON 对象')
+    } else {
+      result.manifestValid = true
+    }
+  } catch (error) {
+    result.problems.push(`package.json 不可解析：${error.message}`)
+  }
+  if (result.manifestValid) {
+    const bundles = manifest?.dsh?.profile?.bundles
+    if (!Array.isArray(bundles)) {
+      result.problems.push('package.json 缺少 dsh.profile.bundles（必须是字符串数组）')
+    } else {
+      result.bundles = bundles.filter((item) => typeof item === 'string')
+      if (result.bundles.length !== bundles.length) {
+        result.problems.push('dsh.profile.bundles 含非字符串项')
+      }
+      if (result.bundles.length === 0) {
+        result.problems.push('dsh.profile.bundles 为空（DSH 将无 bundle 可加载）')
+      }
+      for (const spec of result.bundles) {
+        if (spec.startsWith('./') || spec.startsWith('../')) {
+          const target = path.resolve(dir, spec)
+          if (!fs.existsSync(target)) {
+            result.problems.push(`bundle 相对路径不存在：${spec} → ${target}`)
+          }
+        }
+      }
+    }
+  }
+
+  // ② 补丁层：存在时必须可解析且顶层数组；缺失由上游 init 自动补，不算问题
+  const patchPath = path.join(dir, PROFILE_PATCH_FILENAME)
+  if (fs.existsSync(patchPath)) {
+    try {
+      const doc = readYamlTopArray(patchPath)
+      if (!Array.isArray(doc)) result.problems.push(`${PROFILE_PATCH_FILENAME} 顶层必须是数组`)
+    } catch (error) {
+      result.problems.push(`${PROFILE_PATCH_FILENAME} 不可解析：${error.message}`)
+    }
+  }
+
+  // ③ 根配置：存在时必须可解析（内容 DSH 每次启动无条件重写，不校验语义）
+  const rootConfigPath = path.join(dir, PROFILE_ROOT_FILENAME)
+  if (fs.existsSync(rootConfigPath)) {
+    try {
+      readYamlTopArray(rootConfigPath)
+    } catch (error) {
+      result.problems.push(`${PROFILE_ROOT_FILENAME} 不可解析：${error.message}`)
+    }
+  }
+  return result
+}
+
+/**
+ * 只读列出 `<DSH_HOME>/profiles/` 下全部 profile（Phase 3.1，供 CLI/doctor 使用）。
+ *
+ * 每行带 `kind`：`default` = 配置指定的启动 profile（`runtime.dsh.profile`，缺省 `nomad`），
+ * `user` = 其余盘内目录。内置保留名（`SHIPPED_PROFILES`）是**模板名**而非盘内目录，
+ * 不参与列举 —— DSH 会按需以模板初始化，盘内不存在对应目录是常态。
+ *
+ * @param {{ root: string, config: object }} options - NOMAD_ROOT 与已加载配置
+ *      （测试可直接传 `{ paths: { dsh_home } }` 形状的最小 config）
+ * @returns {{ base: string, defaultName: string, profiles: object[], reserved: string[] }} 结果
+ */
+function listProfiles(options) {
+  const config = options.config
+  const base = path.join(config.paths.dsh_home, PROFILES_DIR)
+  const defaultName = config.runtime?.dsh?.profile ?? DEFAULT_PROFILE
+  const profiles = []
+  if (fs.existsSync(base)) {
+    const names = fs
+      .readdirSync(base, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort()
+    for (const name of names) {
+      const check = validateProfileDir(path.join(base, name))
+      profiles.push({ name, kind: name === defaultName ? 'default' : 'user', ...check })
+    }
+  }
+  return { base, defaultName, profiles, reserved: Object.keys(SHIPPED_PROFILES) }
+}
+
+/**
+ * 创建 profile 骨架（Phase 3.1）。
+ *
+ * 行为：
+ *   - 名字过 `validateProfileName`（保留名 / 路径分隔符 / 保留目录名一律拒绝）；
+ *   - 模板必须是上游内置名（bundles 直接取该模板的清单，与上游 `initProfile` 形状一致）；
+ *   - `package.json` **已存在即拒绝**（绝不覆盖用户内容 —— 与 `ensureNomadProfile` 同姿态）；
+ *   - 伴生文件（patch / pnpm workspace / 根配置）只补缺失。
+ *
+ * @param {{ root: string, config: object }} options - NOMAD_ROOT 与已加载配置
+ * @param {string} name - 新 profile 名（kebab/dir 安全，非保留）
+ * @param {string} [template] - 派生模板（上游内置名，缺省 `web`）
+ * @returns {{ ok: boolean, name?: string, dir?: string, template?: string, bundles?: string[], created?: string[], error?: string }} 结果
+ */
+function createProfile(options, name, template = DEFAULT_TEMPLATE) {
+  const { root, config } = options
+  try {
+    validateProfileName(name)
+  } catch (error) {
+    return { ok: false, error: error.message }
+  }
+  if (!Object.hasOwn(SHIPPED_PROFILES, template)) {
+    return {
+      ok: false,
+      error: `模板必须是上游内置名（${Object.keys(SHIPPED_PROFILES).sort().join(' / ')}），实际 ${JSON.stringify(template)}`,
+    }
+  }
+  const dir = path.join(config.paths.dsh_home, PROFILES_DIR, name)
+  const manifestPath = path.join(dir, 'package.json')
+  if (fs.existsSync(manifestPath)) {
+    return { ok: false, name, dir, error: `profile「${name}」已存在（${manifestPath}）—— 绝不覆盖已有内容` }
+  }
+  const created = []
+  try {
+    fs.mkdirSync(dir, { recursive: true })
+    const manifest = {
+      name: `dsh-profile-${name}`,
+      private: true,
+      dependencies: {},
+      dsh: { profile: { bundles: [...SHIPPED_PROFILES[template]] } },
+    }
+    fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, undefined, 2)}\n`, 'utf8')
+    created.push(manifestPath)
+    const workspacePath = path.join(dir, 'pnpm-workspace.yaml')
+    for (const [file, content] of [
+      [path.join(dir, PROFILE_PATCH_FILENAME), PROFILE_PATCH_TEMPLATE],
+      [workspacePath, PROFILE_PNPM_WORKSPACE],
+      [path.join(dir, PROFILE_ROOT_FILENAME), PROFILE_ROOT_CONFIG],
+    ]) {
+      if (fs.existsSync(file)) continue
+      fs.writeFileSync(file, content, 'utf8')
+      created.push(file)
+    }
+  } catch (error) {
+    return { ok: false, name, dir, error: `创建失败：${error.message}` }
+  }
+  return { ok: true, name, dir, template, bundles: [...SHIPPED_PROFILES[template]], created }
+}
+
 module.exports = {
   ensureNomadProfile,
   inspectNomadProfile,
   resolveNomadProfile,
   validateProfileName,
   validateBundleSource,
+  validateProfileDir,
+  listProfiles,
+  createProfile,
   SHIPPED_PROFILES,
   PROFILES_DIR,
   PROFILE_PATCH_FILENAME,

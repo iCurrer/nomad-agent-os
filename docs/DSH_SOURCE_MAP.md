@@ -377,6 +377,22 @@ Web 启动后：Host 侧 catalog 扫描 root/<projectKey>/* 目录          sess
 并在运行时 `require.resolve` 取 `dist/index.html`（`bundle/web-app/src/index.ts:181`）。
 → **前端产物与 bundle 解耦**，这给 Nomad 多开了一扇 L4 的门（详见 `UI_ARCHITECTURE.md` §8.5）。
 
+## Skill 契约（Phase 3.0-A 勘探，2026-10-09，源码级）
+
+> 来源：`vendor/deepseek-harness/packages/skill/`（`dsh-skill` 注册表 + `dsh-skill-filesystem` provider）。
+> npm 发布包只含 `lib/`，本节全部结论以 vendor 源码为准。
+
+| 契约 | 内容 | 证据 |
+| --- | --- | --- |
+| 架构 | `ctx.skills` 是**服务注册表**：`dsh-skill` 只合并目录、按名字解析胜者；具体来源由 provider 决定 | `packages/skill/skill/src/index.ts:1-10` |
+| 4 个文件根 | ① `<projectRoot>/.dsh/skills`（rank 100）② `<projectRoot>/.agents/skills`（rank 200）③ `$DSH_HOME/skills`（rank 400，**`.system/` 子目录保留被忽略**）④ `$DSH_AGENTS_HOME/skills`（rank 500，缺省 `homedir()/.agents/skills`） | `skill-filesystem/src/index.ts:250-258`、`:36-40` |
+| 两种合法格式 | **目录束** `<root>/<name>/SKILL.md`（深度恰好 2）或**扁平文件** `<root>/<name>.md`（深度 1） | `:676-687`（`isPotentialSkillPath`） |
+| frontmatter | YAML：`name` + `description` 必填，`whenToUse` 可选；name 必须_kebab-case_ `/^[a-z0-9]+(?:-[a-z0-9]+)*$/` | `dsh-skill/src/index.ts:23`、`skill-filesystem:111-117` |
+| 优先级 | rank 数值**越小越优先**：project-dsh 100 < project-agents 200 < runtime 250 < custom 300 < user-dsh 400 < user-agents 500 < bundled 600（同名 skill 由注册表解析唯一胜者） | `skill-filesystem:36-40`、`dsh-skill:31-32` |
+| 热更新 | 文件系统 watch，`skills/change` 事件广播 | `dsh-skill/src/index.ts:296`、`skill-filesystem:653-657` |
+| **Nomad 映射** | `DSH_HOME=data/dsh-home` → user-dsh 根 = **`data/dsh-home/skills/`**（当前不存在，需 3.2 创建基线）；**盘根 `skills/` 目录 DSH 根本不读**。user-agents 根 = `<私有 USERPROFILE>/.agents/skills`（env.js 已重定向 homedir → 盘内，无宿主泄漏） | `launcher/lib/env.js:11` |
+| **3.2 推论** | `nomad skill` 管理目标目录 = `data/dsh-home/skills/`（rank 400 档）；项目级 skill 由 Agent 工作区 `.dsh/skills` 承载，Nomad 不代管 | 本表 |
+
 ## DSH 版本
 
 | DSH Version | 读取日期 | 证据等级 | 说明 |
