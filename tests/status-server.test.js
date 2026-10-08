@@ -15,11 +15,27 @@ const { loadConfig } = require('../launcher/lib/config.js')
 const { discoverRuntime } = require('../launcher/lib/runtime.js')
 const { detectRoot } = require('../launcher/lib/root.js')
 
+/**
+ * 测试用的监听端口 —— **刻意避开生产的固定端口 3090**。
+ *
+ * `config.status.port` 缺省 3090 是刻意设计（面板零构建、手写，读不到运行时随机端口，
+ * 只能靠可预测地址 fetch，见 ADR-0030）。但本机只要有 Nomad 实例在跑，它就正占着 3090；
+ * 测试若再绑同一端口会 EADDRINUSE **假红** —— 失败原因与代码无关，纯粹是与运行实例抢端口。
+ *
+ * 因此测试改用「按 pid 派生」的高位端口（20000~39999，通常落在 Windows 动态端口范围之外）。
+ * 这**不改变任何断言语义**：`端点端口必须等于 config.status.port` 这条契约仍被完整验证，
+ * 只是被验证的具体数值由 3090 换成测试端口。3090 这个**具体数值**另有断言守着 ——
+ * tests/nomad-panel.test.js 用纯文本断言 client.js 的 STATUS_ENDPOINT 与
+ * config/nomad.yaml 的 status.port 一致（不监听端口，故不受运行实例影响）。
+ */
+const TEST_PORT = 20000 + (process.pid % 20000)
+
 /** 构造一份真实上下文（root/config/runtime），供端点与 collectStatus 复用。 */
 function makeContext() {
   const { root, source } = detectRoot({})
   const config = loadConfig({ root })
   const runtime = discoverRuntime({ root, config })
+  config.status.port = TEST_PORT
   return { root, source, config, runtime }
 }
 

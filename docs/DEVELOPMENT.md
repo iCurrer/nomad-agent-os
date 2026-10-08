@@ -121,7 +121,8 @@ npm_config_cache="$CACHE" npm install @deepseek-ai/dsh@0.2.1-alpha.1 --no-audit 
 # 4) 验收
 node launcher/nomad.js doctor             # 14 项：13 通过 / 1 警告（残缺包未修前，见下）
 node launcher/nomad.js profile            # 自建 profile 状态（**只读**；加 --ensure 才写盘）
-node --test tests/*.test.js               # 应 71/71
+node --test tests/*.test.js               # 应 159/159
+#   （status-server 用例用按 pid 派生的测试端口，不占生产固定端口 3090 —— 有实例在跑也不会假红）
 node tests/smoke/real-runtime-smoke.js    # 应 13/13（会 stop 当前实例，跑前确认没有在用）
 node tests/smoke/portable-smoke.js        # 应 12/12（会 stop 当前实例）
 node tests/smoke/stale-state-guard.js     # 应 4/4
