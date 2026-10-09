@@ -48,6 +48,7 @@ const { applyRollback, listDshVersions } = require('./lib/runtime-rollback.js')
 const { createBackup, restoreBackup } = require('./lib/backup.js')
 const { parseWorkspaces } = require('./lib/projects.js')
 const { buildEnv, describePlan } = require('./lib/env.js')
+const { storageReport, clean, humanBytes } = require('./lib/dataman.js')
 const { redactEnv, localDate } = require('./lib/logger.js')
 const { ensureDirs, buildArgv } = require('./lib/bootstrap.js')
 const { ensureNomadProfile, inspectNomadProfile, listProfiles, createProfile, validateProfileDir, validateProfileName } = require('./lib/profile.js')
@@ -90,6 +91,9 @@ const HELP = `Nomad — Portable Agent OS（Launcher ${LAUNCHER_VERSION}）
   skill list           列出已安装 skill（含无效项的问题与被忽略项）
   skill add <path>     安装本地 skill（<name>/SKILL.md 目录束 或 <name>.md 扁平文件）
   skill remove <name>  卸载 skill（热生效：DSH 文件 watch，无需重启实例）
+  storage              数据全景报告（各目录体积/文件数，区分长期与可清理）
+  storage clean        清理可清理白名单（data/tmp、dsh-home/tmp）—— --dry-run 预览；
+                       实际清理必须 --yes；--min-age=<分钟> 调整「多久没动才算陈旧」（默认 120）
   logs                 查看最近日志
   url                  打印带 token 的访问地址（敏感，勿外传）
   open                 用系统浏览器重新打开当前实例
@@ -1022,6 +1026,74 @@ async function main() {
       }
 
       console.error(`未知子命令「${sub}」。可用：list / add <path> / remove <name>；无参数 = list。`)
+      code = 1
+      break
+    }
+    case 'storage': {
+      const ctx = resolveContext(flags)
+      const sub = positionals[1]
+
+      // -- nomad storage（无参数 = 数据全景报告）
+      if (sub === undefined || sub === 'report') {
+        const report = storageReport({ root: ctx.root, config: ctx.config })
+        console.log(`数据全景（NOMAD_ROOT = ${report.root}）`)
+        const catLabel = {
+          'long-term': '长期-核心（永不清理）',
+          cleanable: '可清理（storage clean 白名单）',
+          rotate: '可轮转（暂不在清理范围）',
+          runtime: '运行时态',
+          other: '其他（白名单外，请人工确认）',
+        }
+        for (const entry of report.entries) {
+          if (!entry.exists) {
+            console.log(`  ${entry.rel.padEnd(34)} （不存在）`)
+            continue
+          }
+          const latest = entry.mtimeMs > 0 ? new Date(entry.mtimeMs).toISOString().replace('T', ' ').slice(0, 16) : '—'
+          console.log(`  ${entry.rel.padEnd(34)} ${humanBytes(entry.bytes).padStart(9)}  ${String(entry.files).padStart(5)} 文件  最近写入 ${latest}  [${catLabel[entry.category]}]`)
+        }
+        console.log('')
+        console.log(`可清理合计：${report.human.cleanable} / ${report.cleanableFiles} 文件（预览：nomad storage clean --dry-run）`)
+        break
+      }
+
+      // -- nomad storage clean [--dry-run] [--yes] [--min-age=<分钟>]
+      if (sub === 'clean') {
+        const dryRun = flagBool(flags, ['dry-run', 'n'])
+        const yes = flagBool(flags, ['yes', 'y'])
+        const minAgeRaw = flagValue(flags, ['min-age'])
+        const minAgeMs = minAgeRaw !== undefined ? Number(minAgeRaw) * 60 * 1000 : undefined
+        if (minAgeMs !== undefined && (!Number.isFinite(minAgeMs) || minAgeMs < 0)) {
+          console.error('--min-age 需要是非负分钟数，例如 --min-age=30')
+          code = 1
+          break
+        }
+        const result = clean({ root: ctx.root, config: ctx.config }, { dryRun, minAgeMs })
+        console.log(`清理范围（白名单，绝不进 sessions/profiles/skills）：data/tmp、data/dsh-home/tmp`)
+        console.log(`时间规则：只清「整条目 ${Math.round(result.minAgeMs / 60000)} 分钟内无任何写入」的条目`)
+        console.log('')
+        if (result.targets.length === 0) {
+          console.log('没有满足条件的清理目标（干净基线）。')
+        }
+        for (const target of result.targets) {
+          console.log(`  [将删] ${target.rel}  ${humanBytes(target.bytes)} / ${target.files} 文件`)
+        }
+        for (const item of result.skipped) {
+          console.log(`  [跳过] ${item.rel}  —— ${item.reason}`)
+        }
+        console.log('')
+        if (dryRun) {
+          console.log(`dry-run 合计：${humanBytes(result.totalBytes)} / ${result.totalFiles} 文件（未删除任何内容）。`)
+          console.log('确认无误后加 --yes 实际执行。')
+        } else {
+          for (const failure of result.failures) console.error(`  [失败] ${failure.abs}: ${failure.error}`)
+          console.log(`已清理：${humanBytes(result.freedBytes)} / ${result.freedFiles} 文件${result.failures.length > 0 ? `（${result.failures.length} 项失败）` : ''}。`)
+          if (result.failures.length > 0) code = 1
+        }
+        break
+      }
+
+      console.error(`未知子命令「${sub}」。可用：report（默认）/ clean [--dry-run|--yes] [--min-age=<分钟>]。`)
       code = 1
       break
     }

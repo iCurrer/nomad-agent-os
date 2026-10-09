@@ -320,6 +320,11 @@ window.__ModuleLoader__.load({
 					}
 					rows.push(row("Skills", skillsText));
 				}
+				// 数据面段（Phase 3.3）：可清理白名单（data/tmp + dsh-home/tmp）占用；
+				// 清理入口在 CLI（nomad storage clean），面板只展示不触发。
+				if (data.data !== undefined && data.data !== null) {
+					rows.push(row("Data", `可清理 ${data.data.human ?? "—"} / ${data.data.tmpFiles ?? 0} 文件`));
+				}
 				rows.push(row("Build", buildId === undefined ? "—" : buildId));
 				return rows;
 			};

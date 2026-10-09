@@ -247,11 +247,18 @@ Launcher 自举 `nomad` profile 已被真实 DSH 加载；`web` 是**内置保�
 | **可清理** | `data/tmp/`（quarantine / smoke 残留 / 引擎 `dsh-acl-skill-*` 临时目录）`dsh-home/tmp` | **4.3 MB / 393 文件** | `storage clean` 白名单目标 |
 | 增长源观察 | 引擎每次运行生成 `dsh-acl-skill-*`（实测已有 5 个同型 51 KB 目录） | — | clean 需按前缀+时间规则清 |
 
-- [ ] `nomad storage` —— 盘内数据全景报告：各目录体积/文件数/最近写入时间，
+- [x] `nomad storage` —— 盘内数据全景报告：各目录体积/文件数/最近写入时间，
       区分「长期数据」（sessions/workspace/profiles）与「可清理」（tmp/AppData 缓存）
-- [ ] `nomad storage clean --dry-run` / 实际清理（只清 3.0 勘探确认可清理的白名单目录，
-      **绝不进 sessions**；清理前强制确认 flag）
+      —— **（2026-10-09 完成**，`launcher/lib/dataman.js`；data/ 一级目录三档归类
+      （长期-核心 / 可清理 / 轮转 / 其他），dsh-home 拆分展示「不含 tmp」长期部分）
+- [x] `nomad storage clean --dry-run` / 实际清理（只清 3.0 勘探确认可清理的白名单目录，
+      **绝不进 sessions**；清理前强制确认 flag）—— **（同日完成**，白名单写死
+      `data/tmp` + `data/dsh-home/tmp`；时间规则 = 整条目递归最新 mtime 超过
+      `--min-age`（默认 120 分钟）才可清，运行中实例的 ACL 授权目录自动受保护；
+      `--dry-run` 预览、实际清理必须 `--yes`；doctor 第 20 项「数据面巡检」超
+      10MB/500 文件 WARN；/status 新增 data 段，面板加 Data 行）
 - [ ] 会话导出（可选）：`session.v4.jsonl.zstd` 解包为可读 Markdown（给"换机带走记忆"一个人类可读形态）
+      —— **推迟**：zstd 解码需要第三方依赖，违反零依赖铁律；等上游暴露可复用解码入口再评估
 - [ ] 单测 + 只读保证验证
 
 ### 3.4 Permissions 落地（依赖 3.0 的消费方勘探结论）
@@ -327,8 +334,8 @@ Launcher 自举 `nomad` profile 已被真实 DSH 加载；`web` 是**内置保�
 - [x] CLI（`nomad start/stop/restart/status/doctor/env/paths/logs/url/open/version` **+ 2026-10-08 新增
       `rollback` / `backup` / `restore` / `projects`**）
 - [x] Logs（监管日志 + DSH 原始输出 + 尾部查看）
-- [x] Doctor（只读体检，**18 项**：含宿主污染探针、**盘内字面量目录巡检**、**全部 profile 巡检（3.1）**、运行时包完整性（**锁文件对账**）、
-      Nomad profile 巡检、浏览器交接命令、Web 认证握手）
+- [x] Doctor（只读体检，**20 项**：含宿主污染探针、**盘内字面量目录巡检**、**全部 profile 巡检（3.1）**、运行时包完整性（**锁文件对账**）、
+      Nomad profile 巡检、浏览器交接命令、Web 认证握手、**Skills 巡检（3.2）**、**数据面巡检（3.3）**）
       > 2026-10-08 更新：新增第 17 项「盘内字面量目录巡检」（`scanLiteralDirs`）——
       > 检出形如 `%VAR%` / `${VAR}` 的目录名（环境变量未展开的痕迹）。见 ADR-0033。
 - [x] **修复运行时残缺包**（4 个：`dsh-client-ui-sidebar-documentpreview`、`dsh-experimental-inspector`、

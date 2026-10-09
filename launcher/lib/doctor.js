@@ -26,6 +26,7 @@ const {
 } = require('./runtime.js')
 const { inspectNomadProfile, listProfiles } = require('./profile.js')
 const { listSkills } = require('./skills.js')
+const { dataSummary, WARN_TMP_BYTES, WARN_TMP_FILES } = require('./dataman.js')
 
 /** 状态标识。 */
 const PASS = 'pass'
@@ -332,6 +333,33 @@ async function runDoctor(options) {
       FAIL,
       error instanceof Error ? error.message : String(error),
       '检查 skills 目录权限 / 磁盘状态',
+    )
+  }
+
+  // 9d. 数据面巡检（Phase 3.3，第 20 项；只读）
+  //     tmp 是唯一增长大头（3.0-B 勘探）；超阈值只 WARN 提示清理，不自动动手 ——
+  //     清理永远走显式的 nomad storage clean（白名单 + 时间规则 + --yes 确认）。
+  try {
+    const summary = dataSummary({ root, config })
+    const detail = `可清理 ${summary.human} / ${summary.tmpFiles} 文件（data/tmp + data/dsh-home/tmp）`
+    if (summary.tmpBytes > WARN_TMP_BYTES || summary.tmpFiles > WARN_TMP_FILES) {
+      add(
+        'dataman',
+        '数据面巡检',
+        WARN,
+        `${detail} —— 超过告警阈值（10 MB / 500 文件）`,
+        'nomad storage clean --dry-run 预览后 --yes 执行（白名单内、只清 2 小时无写入的条目）',
+      )
+    } else {
+      add('dataman', '数据面巡检', PASS, `${detail}（阈值内）`)
+    }
+  } catch (error) {
+    add(
+      'dataman',
+      '数据面巡检',
+      FAIL,
+      error instanceof Error ? error.message : String(error),
+      '检查 data 目录权限 / 磁盘状态',
     )
   }
 

@@ -25,6 +25,7 @@ const path = require('node:path')
 
 const { runDoctor } = require('./doctor.js')
 const { readState } = require('./state.js')
+const { dataSummary } = require('./dataman.js')
 const { listSkills } = require('./skills.js')
 
 /** 状态端点返回的 state 字段白名单（其余一律丢弃，尤其带 token 的 `url`）。 */
@@ -114,7 +115,17 @@ function buildSkillsSummary(config) {
 }
 
 /**
- * 组装一次完整状态 JSON（身份 + 运行态 + 健康度 + Skills，四类合一）。
+ * 数据面摘要（Phase 3.3）：可清理白名单的体积/文件数（轻量，不做清理计划）。
+ *
+ * @param {object} config - 已加载配置
+ * @returns {{ tmpBytes: number, tmpFiles: number, human: string }} 摘要
+ */
+function buildDataSummary(config) {
+  return dataSummary({ config })
+}
+
+/**
+ * 组装一次完整状态 JSON（身份 + 运行态 + 健康度 + Skills + 数据面，五类合一）。
  *
  * 健康度每次请求现算（runDoctor 本就是「每次调用现算」），天然适配面板低频刷新。
  * @param {{ root: string, source: string, config: object, runtime: object }} options - 上下文
@@ -129,6 +140,7 @@ async function collectStatus(options) {
     identity: readVersionFile(root),
     state: sanitizeState(readState(root)),
     skills: buildSkillsSummary(config),
+    data: buildDataSummary(config),
     health: {
       summary: doctor.summary,
       results: doctor.results,
