@@ -412,3 +412,20 @@ test('仪表盘改版：数据卡片墙在首屏，About 折叠隐藏但文案�
   })
   assert.ok(toggleFound, '应有「About Nomad」折叠开关（div 形态）')
 })
+
+// ── 发布级打磨（2026-10-09）：语义状态点 + 旧品牌措辞退场 ─────────────────────────
+// 契约：① 状态点颜色只允许上游语义 token（禁硬编码由既有用例兜底，这里锁「确实接线」）；
+//       ② 对外卡片不再裸露内部缩写前缀（"DSH " 字样退场，引擎版本以「引擎 x」措辞呈现）。
+
+test('发布打磨：语义状态色走上游 token（success/warn/error 三件套已接线）', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'packages', 'nomad-panel', 'lib', 'client.js'), 'utf8')
+  assert.ok(source.includes('--dsw-alias-state-success-primary'), '成功色必须来自上游 token')
+  assert.ok(source.includes('--dsw-alias-state-warn-primary'), '警告色必须来自上游 token')
+  assert.ok(source.includes('--dsw-alias-state-error-primary'), '错误色必须来自上游 token')
+})
+
+test('发布打磨：对外卡片措辞不再裸露内部缩写（"DSH " 前缀退场）', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'packages', 'nomad-panel', 'lib', 'client.js'), 'utf8')
+  assert.ok(!source.includes('sub: "DSH "'), '卡片副文案不得再以内部缩写开头（改用「引擎 x」措辞）')
+  assert.ok(source.includes('"引擎 " + (id.DSH_VERSION'), '引擎版本以「引擎 x」措辞呈现')
+})

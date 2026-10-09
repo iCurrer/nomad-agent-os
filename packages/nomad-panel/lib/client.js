@@ -69,6 +69,11 @@ window.__ModuleLoader__.load({
 			radiusMd: "var(--dsw-radius-md, 12px)",
 			radiusSm: "var(--dsw-radius-sm, 8px)",
 			mono: "var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace)",
+			// 语义状态色（卡片状态点用）：全部来自上游真实 token（runtime dist 实证存在），
+			// 兜底 currentColor —— 不硬编码任何色值，明暗主题自动跟随。
+			ok: "var(--dsw-alias-state-success-primary, currentColor)",
+			warn: "var(--dsw-alias-state-warn-primary, currentColor)",
+			bad: "var(--dsw-alias-state-error-primary, currentColor)",
 		};
 
 		// ── 上游归属与许可（About 区块用；合规声明的最小事实集）──────────────────────
@@ -218,13 +223,26 @@ window.__ModuleLoader__.load({
 			});
 		}
 
-		// ── 仪表盘卡片数据（3.6 面板整合 + 维护者 2026-10-09「仪表盘化」反馈）────────
+		// ── 仪表盘卡片数据（3.6 面板整合 + 发布级打磨 2026-10-09）────────────────────
+		/**
+		 * 把实例 phase 翻译成对外措辞（上游 phase 是内部英文枚举，发布面不裸露）。
+		 * @param {string|undefined} phase - 上游 phase 原值
+		 * @returns {string} 对外显示文本
+		 */
+		function describePhase(phase) {
+			if (phase === undefined || phase === null || phase === "") return "未运行";
+			const map = { ready: "运行中", starting: "启动中", stopping: "停止中", stopped: "已退出", exited: "已退出" };
+			return map[String(phase)] ?? String(phase);
+		}
+
 		/**
 		 * 把状态快照折叠成仪表盘卡片数据（纯函数，测试可直接喂桩数据）。
-		 * 每张卡 = { label, value, sub }；端点未就绪时给一张「Status」卡说明原因；
-		 * 各数据段缺失时跳过对应卡 —— 段级容错契约：缺一段不塌整墙。
+		 * 每张卡 = { label, value, sub, tone? }；tone 是语义状态（'ok'|'warn'|'bad'），
+		 * 渲染层据此画状态点（颜色走上游语义 token）。
+		 * 端点未就绪时给一张「Status」卡说明原因；各数据段缺失时跳过对应卡 ——
+		 * 段级容错契约：缺一段不塌整墙。
 		 * @param {{ data: object|null, error: string|null, stale: boolean }} status - useStatus 快照
-		 * @returns {{ label: string, value: string, sub: string }[]} 卡片数据
+		 * @returns {{ label: string, value: string, sub: string, tone?: string }[]} 卡片数据
 		 */
 		function buildCards(status) {
 			const data = status && status.data;
@@ -239,21 +257,24 @@ window.__ModuleLoader__.load({
 			const st = data.state || {};
 			const health = data.health || {};
 			const cards = [];
+			// 对外措辞：引擎版本不带内部缩写（上游全名与归属在 About 中给足）。
 			cards.push({
 				label: "Version",
 				value: id.NOMAD_VERSION || "—",
-				sub: "DSH " + (id.DSH_VERSION || "—"),
+				sub: "引擎 " + (id.DSH_VERSION || "—"),
 			});
 			cards.push({
 				label: "Instance",
-				value: st.phase !== undefined ? String(st.phase) : "未运行",
+				value: describePhase(st.phase),
 				sub: st.publicUrl !== undefined && st.publicUrl !== "" ? String(st.publicUrl) : "nomad start 后出现",
+				tone: st.phase === "ready" ? "ok" : undefined,
 			});
 			const summary = health.summary || {};
 			cards.push({
 				label: "Health",
 				value: `${summary.pass ?? 0} 通过`,
 				sub: `警告 ${summary.warn ?? 0} · 失败 ${summary.fail ?? 0} · 跳过 ${summary.skip ?? 0}`,
+				tone: (summary.fail ?? 0) > 0 ? "bad" : (summary.warn ?? 0) > 0 ? "warn" : "ok",
 			});
 			// Profiles 段（Phase 3.6）：默认 profile 置前；问题明细由 doctor 承担。
 			if (data.profiles !== undefined && data.profiles !== null) {
@@ -269,6 +290,7 @@ window.__ModuleLoader__.load({
 					label: "Skills",
 					value: `有效 ${data.skills.valid ?? 0}`,
 					sub: `已装 ${data.skills.total ?? 0} · 被忽略 ${data.skills.ignored ?? 0}`,
+					tone: (data.skills.valid ?? 0) > 0 ? "ok" : undefined,
 				});
 			}
 			// 数据面段（Phase 3.3）+ 备份提示（3.5）：面板只展示，动作入口在 CLI。
@@ -280,10 +302,12 @@ window.__ModuleLoader__.load({
 				});
 				const backup = data.data.lastBackup;
 				if (backup !== undefined && backup !== null) {
+					const stale = backup.ageDays === null || backup.ageDays === undefined || backup.ageDays > 30;
 					cards.push({
 						label: "Backup",
 						value: backup.ageDays === null || backup.ageDays === undefined ? "从未备份" : `${backup.ageDays} 天前`,
-						sub: backup.ageDays != null && backup.ageDays > 30 ? "建议 nomad backup" : "nomad backup 可备份",
+						sub: stale ? "建议 nomad backup" : "nomad backup 可备份",
+						tone: stale ? "warn" : "ok",
 					});
 				}
 			}
@@ -294,6 +318,7 @@ window.__ModuleLoader__.load({
 					label: "Permissions",
 					value: pm.exists ? (pm.summary !== "" ? pm.summary : "模板异常") : "模板缺失",
 					sub: `never ${pm.never ?? 0} 条${pm.problems > 0 ? ` · ${pm.problems} 个问题（见 doctor）` : ""}`,
+					tone: !pm.exists ? "bad" : pm.problems > 0 ? "warn" : "ok",
 				});
 			}
 			// 更新提示段（Phase 3.6）：只回读 CLI 显式检查的落盘留档，端点零网络。
@@ -301,13 +326,14 @@ window.__ModuleLoader__.load({
 				const upd = data.update;
 				let value = "从未检查";
 				let sub = "nomad update --check";
+				let tone;
 				if (upd !== undefined && upd !== null) {
-					if (upd.comparison === "up-to-date") { value = "已是最新"; sub = String(upd.current ?? "—"); }
+					if (upd.comparison === "up-to-date") { value = "已是最新"; sub = String(upd.current ?? "—"); tone = "ok"; }
 					else if (upd.comparison === "current-newer") { value = "盘内更新"; sub = `${upd.current ?? "—"} > ${upd.latest ?? "—"}，不动作`; }
-					else if (upd.comparison === "update-available") { value = "可更新"; sub = `${upd.current ?? "—"} → ${upd.latest ?? "—"}（nomad update --yes）`; }
-					else { value = "查询失败"; sub = "重试 nomad update --check"; }
+					else if (upd.comparison === "update-available") { value = "可更新"; sub = `${upd.current ?? "—"} → ${upd.latest ?? "—"}（nomad update --yes）`; tone = "warn"; }
+					else { value = "查询失败"; sub = "重试 nomad update --check"; tone = "bad"; }
 				}
-				cards.push({ label: "Update", value: value, sub: sub });
+				cards.push({ label: "Update", value: value, sub: sub, tone: tone });
 			}
 			return cards;
 		}
@@ -441,15 +467,32 @@ window.__ModuleLoader__.load({
 											minWidth: 0,
 										},
 										children: [
-											jsx_runtime.jsx("div", {
-												style: {
-													color: T.secondary,
-													fontSize: "10px",
-													letterSpacing: "0.08em",
-													textTransform: "uppercase",
-												},
-												children: card.label,
-											}, "l"),
+											// 标签行：语义状态点（仅 tone 存在时渲染）+ 标签。
+											// 状态点颜色走上游语义 token（success/warn/error），明暗主题自动跟随。
+											jsx_runtime.jsxs("div", {
+												style: { display: "flex", alignItems: "center", gap: "6px", minWidth: 0 },
+												children: [
+													card.tone !== undefined ? jsx_runtime.jsx("span", {
+														"aria-hidden": "true",
+														style: {
+															width: "7px",
+															height: "7px",
+															borderRadius: "50%",
+															background: card.tone === "ok" ? T.ok : card.tone === "warn" ? T.warn : T.bad,
+															flexShrink: 0,
+														},
+													}, "dot") : null,
+													jsx_runtime.jsx("div", {
+														style: {
+															color: T.secondary,
+															fontSize: "10px",
+															letterSpacing: "0.08em",
+															textTransform: "uppercase",
+														},
+														children: card.label,
+													}, "l"),
+												],
+											}, "lt"),
 											jsx_runtime.jsx("div", {
 												style: {
 													color: T.primary,
@@ -482,8 +525,12 @@ window.__ModuleLoader__.load({
 								columnGap: "22px",
 							},
 							children: [
-								row("Build", (buildId === undefined ? "—" : buildId) + staleNote),
-								row("Panel", PANEL_ID),
+								// 对外措辞：不再裸露内部标签（原 Build/Panel 是开发期产物）——
+								// 「上游构建」保留排障价值；「面板标识」是本面板的寻址 id（排障锚点，
+								// 由 tests/nomad-panel.test.js 的身份用例守着）；「端点」如实标注只读。
+								row("上游构建", (buildId === undefined ? "—" : buildId) + staleNote),
+								row("面板标识", PANEL_ID),
+								row("状态端点", STATUS_ENDPOINT.replace("http://", "") + "（只读）"),
 							],
 						}, "meta"),
 						// ④ About 开关 —— 折叠切换。刻意用 div 而非 button：
