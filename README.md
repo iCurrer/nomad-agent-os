@@ -1,12 +1,16 @@
 <div align="center">
 
+<img src="docs/assets/hero-banner.jpg" alt="Nomad — Your AI workspace, in your pocket." width="100%">
+
 # 🧭 Nomad
 
 ### Portable Agent OS —— 把 Agent 的家装进 U 盘，把浏览器变成它的屏幕
 
+**简体中文** ｜ [English](README.en.md)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A520-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org)
-[![Tests](https://img.shields.io/badge/unit%20tests-168%20passing-brightgreen?style=flat-square)](#-测试与自检)
+[![Tests](https://img.shields.io/badge/unit%20tests-245%20passing-brightgreen?style=flat-square)](#-测试与自检)
 [![Dependencies](https://img.shields.io/badge/runtime%20dependencies-zero-009688?style=flat-square)](#-从源码运行)
 [![Upstream](https://img.shields.io/badge/upstream-DSH%20%C2%B7%20MIT-4C8CBF?style=flat-square)](https://github.com/deepseek-ai/deepseek-harness)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%C2%B7%20USB-8A2BE2?style=flat-square)](#-部署到-u-盘)
@@ -66,7 +70,8 @@ flowchart TB
 ## 🚀 快速开始
 
 ```bash
-# 体检（只读，18 项）：路径 / Secret / 目录 / 运行时 / 隔离 / 端口 / 宿主污染探针 / 盘内字面量巡检 / 全部 profile 巡检
+# 体检（只读，21 项）：路径 / Secret / 目录 / 运行时 / 隔离 / 端口 / 宿主污染探针 /
+# 盘内字面量巡检 / 全部 profile 巡检 / Skills / 数据面 / 权限档位
 nomad doctor
 
 # 只看启动计划，不启动任何进程（含完整 argv 与隔离计划）
@@ -83,13 +88,16 @@ nomad logs            # 日志
 nomad stop            # 停止
 ```
 
-生命周期管理（V1 闭环）：
+生命周期与扩展管理：
 
 ```bash
 nomad backup                    # 备份盘内数据（零依赖递归复制 + 清单）
 nomad restore <backup-dir>      # 从备份合并恢复（覆盖同名、不删多余）
 nomad projects                  # 只读列出盘内 DSH 工作区 / 项目
 nomad rollback [<version>]      # 列出或切换到可用 DSH 运行时版本
+nomad skill list                # 管理盘内 Agent 技能（热生效，装删无需重启）
+nomad storage report            # 数据全景：各目录体积 / 文件数 / 可清理项
+nomad update --check            # 检查 DSH 新版本（只读；升级须 --yes，旧版本可回滚）
 ```
 
 Windows 可直接双击：`Nomad.cmd`（启动）｜`Nomad-Restart.cmd`（重启）｜`Nomad-Stop.cmd`（停止）｜`Nomad-Doctor.cmd`（体检）。
@@ -119,7 +127,7 @@ Windows 可直接双击：`Nomad.cmd`（启动）｜`Nomad-Restart.cmd`（重启
 无 TypeScript、无构建步骤、无 npm 依赖。唯一需要的是本机 Node 20+ 用于跑测试。
 
 ```bash
-node --test tests/*.test.js       # 168 项单元测试（18 个测试文件），零依赖
+node --test tests/*.test.js       # 245 项单元测试（25 个测试文件），零依赖
 ```
 
 **B. 完整复现便携运行时（开发机流程）**
@@ -131,14 +139,15 @@ Agent 引擎 [`@deepseek-ai/dsh`](https://github.com/deepseek-ai/deepseek-harnes
 ## 🧪 测试与自检
 
 ```bash
-node --test tests/*.test.js             # 168 项单元测试
+node --test tests/*.test.js             # 245 项单元测试
 node tests/smoke/portable-smoke.js      # 端到端冒烟（替身运行时，无需真实 DSH）
 node tests/smoke/stale-state-guard.js   # PID 复用安全闸
 node tests/smoke/real-runtime-smoke.js  # 真实 DSH 端到端（会停掉在跑的实例）
 ```
 
 体检覆盖：路径 / Secret / 目录基线 / 运行时包完整性（锁文件对账）/ 隔离 / 端口 /
-宿主污染探针 / **盘内字面量目录巡检**（自动发现 `%VAR%` 式误写入）/ 浏览器交接 / Web 认证握手。
+宿主污染探针 / **盘内字面量目录巡检**（自动发现 `%VAR%` 式误写入）/ 浏览器交接 / Web 认证握手 /
+**Skills 装载** / **数据面巡检** / **权限档位自证**。
 
 > 打包好的 `runtime/`（Node v22.23.3 + DSH 0.2.1-alpha.1，共 32,089 文件 / 603.7 MB）
 > 让用户机做到**零编译、零 npm、零 Node 安装**。详见 [`docs/PHASE1_LAUNCHER.md`](docs/PHASE1_LAUNCHER.md)。
@@ -172,7 +181,7 @@ node tools/deploy-usb.js --target E:\ --app-only --force    # 日常开发：只
 | 路径 | 说明 |
 | --- | --- |
 | `launcher/` | **启动器（零依赖 Node CLI + 运行时监督进程）** |
-| `packages/` | L4-a 补丁层 + 品牌 / 自有面板 / 换肤三个零构建客户端插件 |
+| `packages/` | L4-a 补丁层 + 品牌 / 自有面板 / 换肤 / 语言包 等零构建客户端插件 |
 | `config/` | `nomad.yaml` `providers.yaml` `permissions.yaml` `compatibility.yaml` |
 | `tests/` | 单元测试 + 端到端冒烟 + 替身运行时 fixture |
 | `docs/` | 架构 / 源码地图 / 数据模型 / 可移植性 / 安全 / 测试 / 上游 / **决策（ADR）** / UI / 开发 / 路线 / 启动器 / 部署 |
@@ -189,7 +198,7 @@ node tools/deploy-usb.js --target E:\ --app-only --force    # 日常开发：只
 | Phase 0 | Source Reconnaissance → `docs/DSH_SOURCE_MAP.md` | ✅ 已完成 |
 | Phase 1 | Portable Bootstrap（Launcher → DSH → Web → Browser） | ✅ 已完成（运行时已打包，真实 DSH 端到端闭环） |
 | Phase 2 | Nomad Web UI（V1 闭环：面板 / 品牌 / 换肤 / 生命周期命令） | ✅ 已完成 V1 |
-| Phase 3 | Nomad Agent OS（Projects / Memory / Skills / Profiles / Permissions / Runtime Manager） | 🚧 待开始 |
+| Phase 3 | Nomad Agent OS（Profiles / Skills / 数据面 / Permissions / Runtime Manager / 面板整合） | ✅ 已完成（真机验收收尾中） |
 
 里程碑与勾选明细见 [`docs/ROADMAP.md`](docs/ROADMAP.md)，技术决策见 [`docs/DECISIONS.md`](docs/DECISIONS.md)。
 
@@ -208,7 +217,7 @@ node tools/deploy-usb.js --target E:\ --app-only --force    # 日常开发：只
 | **561 个传递依赖** | MIT / Apache-2.0 / ISC / BSD 为主 | **无 GPL / AGPL 等强 copyleft**，聚合清单见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) |
 
 - **未修改上游源码**：Core Patch 数 ＝ **0**，全部定制通过官方文档化扩展点完成
-  （Cordis 插件 / `cordis.patch.yml` 行补丁 / 客户端插件槽位 / 主题 token 覆盖）。
+  （Cordis 插件 / `cordis.patch.yml` 行补丁 / 客户端插件槽位 / 主题 token 覆盖 / locale 语言包）。
 - **商标声明**：DSH / DeepSeek Harness 是深度求索公司的注册商标，未经授权不得用作项目名
   —— 本项目名 `Nomad` 不含该商标。Nomad 为独立项目，与 DeepSeek
   **无隶属、无赞助，亦无背书关系**。「基于 DeepSeek Harness 构建」属上游
