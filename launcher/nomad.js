@@ -61,6 +61,7 @@ const { probeHttp } = require('./lib/probe.js')
 const { openBrowser } = require('./lib/browser.js')
 const { describeHandshake } = require('./lib/web-auth.js')
 const { runDoctor, renderDoctor } = require('./lib/doctor.js')
+const ui = require('./lib/cli-ui.js')
 
 /** 启动器版本。 */
 const LAUNCHER_VERSION = require('./package.json').version
@@ -78,51 +79,58 @@ const HANDOFF_WAIT_MS = 6000
 /** 备份提示阈值（天）：start 时上次备份超过该天数则提示，不自动执行（3.5）。 */
 const BACKUP_HINT_DAYS = 30
 
-const HELP = `Nomad — Portable Agent OS（Launcher ${LAUNCHER_VERSION}）
-
-用法：nomad [命令] [选项]
-
-命令：
-  start                启动 Nomad（默认后台运行后返回）
-  stop                 停止当前实例
-  restart              停止后重新启动
-  status               查看实例状态
-  doctor               体检（路径 / 隔离 / 运行时 / 端口 / 宿主探针）
-  env                  打印将要注入子进程的隔离环境计划
-  paths                打印解析后的路径与运行时入口
-  profile              查看自建 profile 状态（只读）
-  profile --ensure     把自建 profile 自举到位（幂等；start 也会自动做）
-  skill                管理 Agent 技能（user-dsh 根：data/dsh-home/skills/，rank 400）
-  skill list           列出已安装 skill（含无效项的问题与被忽略项）
-  skill add <path>     安装本地 skill（<name>/SKILL.md 目录束 或 <name>.md 扁平文件）
-  skill remove <name>  卸载 skill（热生效：DSH 文件 watch，无需重启实例）
-  storage              数据全景报告（各目录体积/文件数，区分长期与可清理）
-  storage clean        清理可清理白名单（data/tmp、dsh-home/tmp）—— --dry-run 预览；
-                       实际清理必须 --yes；--min-age=<分钟> 调整「多久没动才算陈旧」（默认 120）
-  logs                 查看最近日志
-  url                  打印带 token 的访问地址（敏感，勿外传）
-  open                 用系统浏览器重新打开当前实例
-  version              打印版本信息
-  rollback              回滚 DSH 运行时版本（改写 current 指针，影响下次启动）
-  update                检查 DSH 新版本（默认 --check 只读；--yes 才实际升级）
-  backup               备份盘内用户数据（会话/项目/配置）到 data/backups/
-  restore              从备份恢复盘内用户数据
-  projects             列出已持久化的 DSH 工作区（项目）
-
-选项：
-  -f, --foreground     前台运行（Ctrl+C 停止，便于调试）
-  -d, --background     后台运行（默认）
-      --dry-run        只打印启动计划，不启动任何进程
-      --no-browser     不自动打开浏览器
-      --root <dir>     显式指定 NOMAD_ROOT
-      --config <file>  显式指定配置文件
-      --timeout <ms>   等待就绪的超时（默认 ${String(DEFAULT_READY_TIMEOUT_MS)}）
-      --lines <n>      logs 显示行数（默认 60）
-      --raw            logs 查看 DSH 原始输出
-      --json           以 JSON 输出（status / doctor）
-
-硬约束：构建期与运行期分离；用户机零编译；启动路径不出现 npx；一切路径从 NOMAD_ROOT 派生。
-`
+/** 帮助文本（Linux man 页风格：品牌头 + 分区标题 + 等宽命令列）。 */
+function buildHelp() {
+  const g = ui.glyphs()
+  const cmd = (names, desc) => `  ${ui.bold(ui.padEnd(names, 20))} ${desc}`
+  const lines = [
+    `${g.brand} ${ui.bold('Nomad')} ${ui.dim('—')} ${ui.cyan('Portable Agent OS')} ${ui.dim(`(Launcher ${LAUNCHER_VERSION})`)}`,
+    '',
+    `${ui.dim('用法')}   nomad ${ui.dim('[命令] [选项]')}`,
+    '',
+    ui.title('命令'),
+    cmd('start', '启动 Nomad（默认后台运行后返回）'),
+    cmd('stop', '停止当前实例'),
+    cmd('restart', '停止后重新启动'),
+    cmd('status', '查看实例状态'),
+    cmd('doctor', '体检（路径 / 隔离 / 运行时 / 端口 / 宿主探针）'),
+    cmd('env', '打印将要注入子进程的隔离环境计划'),
+    cmd('paths', '打印解析后的路径与运行时入口'),
+    cmd('profile', '查看自建 profile 状态（只读）'),
+    cmd('profile --ensure', '把自建 profile 自举到位（幂等；start 也会自动做）'),
+    cmd('skill', `管理 Agent 技能（user-dsh 根：${ui.dim('data/dsh-home/skills/')}，rank 400）`),
+    cmd('skill list', '列出已安装 skill（含无效项的问题与被忽略项）'),
+    cmd('skill add <path>', '安装本地 skill（<name>/SKILL.md 目录束 或 <name>.md 扁平文件）'),
+    cmd('skill remove <name>', '卸载 skill（热生效：DSH 文件 watch，无需重启实例）'),
+    cmd('storage', '数据全景报告（各目录体积/文件数，区分长期与可清理）'),
+    cmd('storage clean', `清理可清理白名单（data/tmp、dsh-home/tmp）—— ${ui.dim('--dry-run 预览')}`),
+    `  ${ui.padEnd('', 20)} ${ui.dim('实际清理必须 --yes；--min-age=<分钟> 调整「多久没动才算陈旧」（默认 120）')}`,
+    cmd('logs', '查看最近日志'),
+    cmd('url', '打印带 token 的访问地址（敏感，勿外传）'),
+    cmd('open', '用系统浏览器重新打开当前实例'),
+    cmd('version', '打印版本信息'),
+    cmd('rollback', '回滚 DSH 运行时版本（改写 current 指针，影响下次启动）'),
+    cmd('update', '检查 DSH 新版本（默认 --check 只读；--yes 才实际升级）'),
+    cmd('backup', '备份盘内用户数据（会话/项目/配置）到 data/backups/'),
+    cmd('restore', '从备份恢复盘内用户数据'),
+    cmd('projects', '列出已持久化的 DSH 工作区（项目）'),
+    '',
+    ui.title('选项'),
+    cmd('-f, --foreground', '前台运行（Ctrl+C 停止，便于调试）'),
+    cmd('-d, --background', '后台运行（默认）'),
+    cmd('--dry-run', '只打印启动计划，不启动任何进程'),
+    cmd('--no-browser', '不自动打开浏览器'),
+    cmd('--root <dir>', '显式指定 NOMAD_ROOT'),
+    cmd('--config <file>', '显式指定配置文件'),
+    cmd('--timeout <ms>', `等待就绪的超时（默认 ${String(DEFAULT_READY_TIMEOUT_MS)}）`),
+    cmd('--lines <n>', 'logs 显示行数（默认 60）'),
+    cmd('--raw', 'logs 查看 DSH 原始输出'),
+    cmd('--json', '以 JSON 输出（status / doctor）'),
+    '',
+    ui.dim('硬约束：构建期与运行期分离；用户机零编译；启动路径不出现 npx；一切路径从 NOMAD_ROOT 派生。'),
+  ]
+  return lines.join('\n')
+}
 
 /**
  * 同步睡眠。
@@ -213,68 +221,70 @@ function readNomadVersion(root) {
 function printPlan(ctx, options) {
   const { root, source, config, runtime } = ctx
   const built = buildEnv({ root, isolation: config.isolation })
-  console.log('── Nomad 启动计划（dry-run，未启动任何进程）──')
-  console.log(`NOMAD_ROOT   ${root}`)
-  console.log(`  来源       ${source}`)
-  console.log(`配置文件     ${config.file}`)
-  console.log(`版本         Nomad ${readNomadVersion(root)} / launcher ${LAUNCHER_VERSION}`)
+  const g = ui.glyphs()
+  console.log(`${g.brand} ${ui.bold('Nomad 启动计划')} ${ui.dim('（dry-run，未启动任何进程）')}`)
   console.log('')
-  console.log('运行时：')
-  console.log(`  Node       ${runtime.node.path}  (${runtime.node.version ?? '版本未探测'}，来源 ${runtime.node.source})`)
+  console.log(ui.kv('NOMAD_ROOT', ui.dim(root)))
+  console.log(`  ${ui.kv('来源', ui.dim(source))}`)
+  console.log(ui.kv('配置文件', ui.dim(config.file)))
+  console.log(ui.kv('版本', `Nomad ${readNomadVersion(root)} / launcher ${LAUNCHER_VERSION}`))
+  console.log('')
+  console.log(ui.title('运行时'))
+  console.log(`  ${ui.kv('Node', `${ui.dim(runtime.node.path)} ${ui.dim(`(${runtime.node.version ?? '版本未探测'}，来源 ${runtime.node.source})`)}`)}`)
   if (runtime.dsh.missing === true) {
-    console.log(`  DSH        ✗ ${runtime.dsh.reason ?? '缺失'}`)
+    console.log(`  ${ui.kv('DSH', `${g.fail} ${runtime.dsh.reason ?? '缺失'}`)}`)
   } else {
-    console.log(`  DSH        ${runtime.dsh.name} ${runtime.dsh.version}`)
-    console.log(`  入口       ${runtime.dsh.entry}（来自 ${runtime.dsh.entrySource}）`)
+    console.log(`  ${ui.kv('DSH', `${runtime.dsh.name} ${runtime.dsh.version}`)}`)
+    console.log(`  ${ui.kv('入口', `${ui.dim(runtime.dsh.entry)} ${ui.dim(`（来自 ${runtime.dsh.entrySource}）`)}`)}`)
   }
   console.log('')
   if (runtime.dsh.missing === true) {
-    console.log('启动命令     跳过（缺 DSH 运行时）')
+    console.log(ui.kv('启动命令', `${g.fail} 跳过（缺 DSH 运行时）`))
   } else {
     const argv = buildArgv({ config, runtime })
-    console.log('启动命令：')
+    console.log(ui.title('启动命令'))
     console.log(`  ${argv.display}`)
-    console.log(`  cwd = ${argv.cwd}`)
+    console.log(`  ${ui.kv('cwd', ui.dim(argv.cwd))}`)
   }
   console.log('')
-  console.log('DSH profile（start 时自举，只写盘内）：')
+  console.log(ui.title('DSH profile（start 时自举，只写盘内）'))
   try {
     const info = inspectNomadProfile({ root, config })
-    console.log(`  名称       ${info.spec.name}（派生自内置模板 ${info.spec.template}）`)
-    console.log(`  目录       ${info.spec.dir}`)
-    console.log(`  自研层     ${info.spec.bundleSpec}`)
+    console.log(`  ${ui.kv('名称', `${info.spec.name} ${ui.dim(`（派生自内置模板 ${info.spec.template}）`)}`)}`)
+    console.log(`  ${ui.kv('目录', ui.dim(info.spec.dir))}`)
+    console.log(`  ${ui.kv('自研层', info.spec.bundleSpec)}`)
     const state = info.exists
       ? (info.bundleLast ? '已就绪（自研层在末位）' : '已存在但自研层缺失/不在末位 → start 会补正')
       : '尚未初始化 → start 会创建'
-    console.log(`  状态       ${state}`)
-    for (const problem of info.problems) console.log(`  ⚠ ${problem}`)
+    console.log(`  ${ui.kv('状态', info.exists && info.bundleLast ? ui.tone.ok(state) : state)}`)
+    for (const problem of info.problems) console.log(`  ${g.warn} ${problem}`)
   } catch (error) {
-    console.log(`  ✗ ${error instanceof Error ? error.message : String(error)}`)
+    console.log(`  ${g.fail} ${error instanceof Error ? error.message : String(error)}`)
   }
   console.log('')
-  console.log('宿主隔离：')
+  console.log(ui.title('宿主隔离'))
   for (const line of describePlan(built.report, config.isolation.override, root)) console.log(`  ${line}`)
   console.log('')
   // 权限档位（3.4）：只读展示模板 + never 自证；禁止自造桥接到上游权限体系（3.0-C）。
   try {
     const perm = loadPermissions({ root })
     const checks = selfCheckNever(perm, { config, envReport: built.report, runtime })
-    console.log('权限档位（config/permissions.yaml，契约展示；上游生效的是 DSH 原生权限体系）：')
+    console.log(ui.title('权限档位（config/permissions.yaml，契约展示）'))
     for (const line of describePermissions(perm, checks)) console.log(`  ${line}`)
     if (perm.problems.length > 0) {
-      console.log(`  ⚠ 模板问题: ${perm.problems.join('；')}`)
+      console.log(`  ${g.warn} 模板问题: ${perm.problems.join('；')}`)
     }
     console.log('')
   } catch (error) {
-    console.log(`权限档位    ✗ ${error instanceof Error ? error.message : String(error)}`)
+    console.log(`${g.fail} ${error instanceof Error ? error.message : String(error)}`)
     console.log('')
   }
-  console.log(`浏览器        ${options.openBrowser ? '启动就绪后由 Nomad 打开（DSH 恒定 --no-open）' : '不打开'}`)
-  console.log(`状态文件      ${stateFile(root)}`)
+  console.log(ui.kv('浏览器', options.openBrowser ? '启动就绪后由 Nomad 打开（DSH 恒定 --no-open）' : '不打开'))
+  console.log(ui.kv('状态文件', ui.dim(stateFile(root))))
   if (config.warnings.length > 0) {
     console.log('')
-    console.log('配置警告：')
-    for (const warning of config.warnings) console.log(`  ⚠ ${warning}`)
+    console.log(ui.title('配置警告'))
+    for (const warning of config.warnings) console.log(`  ${g.warn} ${warning}`)
   }
 }
 
@@ -398,12 +408,13 @@ async function cmdStart(flags) {
 
   const existing = readState(ctx.root)
   if (existing !== null && (isAlive(existing.supervisorPid) || isAlive(existing.dshPid))) {
-    console.log('Nomad 已在运行。')
-    console.log(`  地址  ${existing.publicUrl ?? sanitizeUrl(existing.url ?? '')}`)
-    console.log(`  认证  ${describeHandshake(existing.webAuth)}`)
-    console.log(`  浏览器 ${describeHandoff(existing.browserHandoff)}`)
-    console.log(`  DSH   pid=${String(existing.dshPid)}  版本=${String(existing.runtime?.version ?? '未知')}`)
-    console.log('  如需重新开始，先执行 nomad stop。')
+    const g = ui.glyphs()
+    console.log(`${g.dot} ${ui.bold('Nomad 已在运行')}`)
+    console.log(`  ${ui.kv('地址', ui.dim(existing.publicUrl ?? sanitizeUrl(existing.url ?? '')))}`)
+    console.log(`  ${ui.kv('认证', describeHandshake(existing.webAuth))}`)
+    console.log(`  ${ui.kv('浏览器', describeHandoff(existing.browserHandoff))}`)
+    console.log(`  ${ui.kv('DSH', `pid=${String(existing.dshPid)}  版本=${String(existing.runtime?.version ?? '未知')}`)}`)
+    console.log(`  ${ui.dim('如需重新开始，先执行 nomad stop。')}`)
     return 0
   }
   if (existing !== null) {
@@ -460,10 +471,11 @@ async function cmdStart(flags) {
   }
 
   child.unref()
-  console.log(`Nomad 启动中…（监管进程 pid=${String(child.pid)}）`)
+  const g = ui.glyphs()
+  console.log(`${ui.dim('◌')} Nomad 启动中… ${ui.dim(`（监管进程 pid=${String(child.pid)}）`)}`)
   const ready = await waitForReady(ctx.root, timeoutMs, child.pid)
   if (!ready.ok) {
-    console.error(`启动失败：${ready.reason ?? '未知原因'}`)
+    console.error(`${g.fail} 启动失败：${ready.reason ?? '未知原因'}`)
     console.error('')
     console.error(tailLogs(ctx.config, { raw: false, lines: 30 }))
     if (isAlive(child.pid)) forceKillTree(child.pid)
@@ -474,29 +486,29 @@ async function cmdStart(flags) {
   const state = await waitForHandoff(ctx.root, child.pid, openBrowser ? HANDOFF_WAIT_MS : 0) ?? ready.state
   const handoff = state.browserHandoff
   console.log('')
-  console.log('Nomad 已就绪。')
-  console.log(`  地址   ${state.publicUrl ?? sanitizeUrl(state.url)}`)
-  console.log(`  端口   ${String(state.port)}${ctx.config.web.port === 0 ? '（由 OS 协商，非写死）' : ''}`)
-  console.log(`  浏览器 ${describeHandoff(handoff)}`)
-  console.log(`  认证   ${describeHandshake(state.webAuth)}`)
-  console.log(`  运行时 DSH ${String(state.runtime?.version ?? '未知')} / Nomad ${readNomadVersion(ctx.root)}`)
-  console.log(`  进程   监管 pid=${String(state.supervisorPid)}  DSH pid=${String(state.dshPid)}`)
-  console.log(`  日志   ${ctx.config.paths.logs}`)
-  console.log('  提示   浏览器上一页显示 "authentication required" 时，用 `nomad open` 重开（会带上令牌）；')
-  console.log('         手动访问用 `nomad url`（打印含令牌的完整地址，敏感勿外传）；停止用 `nomad stop`')
+  console.log(`${g.brand} ${ui.tone.ok(ui.bold('Nomad 已就绪'))}`)
+  console.log(`  ${ui.kv('地址', ui.dim(state.publicUrl ?? sanitizeUrl(state.url)))}`)
+  console.log(`  ${ui.kv('端口', `${String(state.port)}${ctx.config.web.port === 0 ? ui.dim('（由 OS 协商，非写死）') : ''}`)}`)
+  console.log(`  ${ui.kv('浏览器', describeHandoff(handoff))}`)
+  console.log(`  ${ui.kv('认证', describeHandshake(state.webAuth))}`)
+  console.log(`  ${ui.kv('运行时', `DSH ${String(state.runtime?.version ?? '未知')} / Nomad ${readNomadVersion(ctx.root)}`)}`)
+  console.log(`  ${ui.kv('进程', `监管 pid=${String(state.supervisorPid)}  DSH pid=${String(state.dshPid)}`)}`)
+  console.log(`  ${ui.kv('日志', ui.dim(ctx.config.paths.logs))}`)
+  console.log(`  ${ui.dim('提示   浏览器上一页显示 "authentication required" 时，用 `nomad open` 重开（会带上令牌）；')}`)
+  console.log(`  ${ui.dim('       手动访问用 `nomad url`（打印含令牌的完整地址，敏感勿外传）；停止用 `nomad stop`')}`)
   // 3.5 备份提示：只提示不自动执行（备份永远由维护者显式触发）。
   try {
     const backupInfo = lastBackupInfo(ctx.config)
     if (backupInfo.last === null) {
-      console.log('  备份   尚未备份过 —— 建议先 `nomad backup` 再开始正式使用（sessions 是唯一事实源）。')
+      console.log(`  ${ui.kv('备份', `${ui.tone.warn('尚未备份过')} ${ui.dim('—— 建议先 `nomad backup` 再开始正式使用（sessions 是唯一事实源）。')}`)}`)
     } else if (backupInfo.ageDays >= BACKUP_HINT_DAYS) {
-      console.log(`  备份   上次备份已是 ${backupInfo.ageDays} 天前（${backupInfo.last}）—— 建议 \`nomad backup\` 一次。`)
+      console.log(`  ${ui.kv('备份', `${ui.tone.warn(`上次备份已是 ${backupInfo.ageDays} 天前`)} ${ui.dim(`（${backupInfo.last}）—— 建议 \`nomad backup\` 一次。`)}`)}`)
     }
   } catch { /* 提示失败不影响启动 */ }
   if (handoff?.state === 'failed') {
     console.log('')
-    console.log('  ⚠ 自动打开浏览器未成功，但实例已就绪可正常使用（见上行「浏览器」）。')
-    console.log('    自救：`nomad open` → `nomad url` 手动粘地址 → 配 web.browser_path 指定浏览器。')
+    console.log(`  ${ui.glyphs().warn} 自动打开浏览器未成功，但实例已就绪可正常使用（见上行「浏览器」）。`)
+    console.log(`    ${ui.dim('自救：`nomad open` → `nomad url` 手动粘地址 → 配 web.browser_path 指定浏览器。')}`)
   }
   // 退出码只回答"实例是否就绪"这一件事。浏览器交接失败不影响实例可用性
   // （nomad open / nomad url 都能救），所以不把它编码成非 0 —— 那会让 restart
@@ -514,7 +526,7 @@ function cmdStop(flags) {
   const force = flagBool(flags, ['force'])
   const state = readState(ctx.root)
   if (state === null) {
-    console.log('Nomad 未在运行。')
+    console.log(`${ui.glyphs().ring} Nomad 未在运行。`)
     return 0
   }
 
@@ -525,7 +537,7 @@ function cmdStop(flags) {
 
   if (!aliveSupervisor && !aliveDsh) {
     clearState(ctx.root)
-    console.log('Nomad 未在运行（已清理陈旧状态文件）。')
+    console.log(`${ui.glyphs().ring} Nomad 未在运行（已清理陈旧状态文件）。`)
     return 0
   }
 
@@ -533,7 +545,7 @@ function cmdStop(flags) {
   // PID 会被系统复用，陈旧状态里的 pid 可能已指向毫不相干的进程。
   if (!isFresh(state)) {
     clearState(ctx.root)
-    console.error('检测到陈旧状态（心跳已过期），已跳过停止操作以避免误杀无关进程。')
+    console.error(`${ui.glyphs().fail} 检测到陈旧状态（心跳已过期），已跳过停止操作以避免误杀无关进程。`)
     console.error(`  状态文件记录的监管进程 pid=${String(supervisorPid)}，DSH pid=${String(dshPid)}。`)
     console.error('  这些 PID 可能已被操作系统复用。若确认仍有 Nomad 残留进程，请自行核对后手动结束。')
     return 1
@@ -570,7 +582,9 @@ function cmdStop(flags) {
     console.warn('      它含本次运行的启动 URL（权限 0600）；下次 start 会先自动清理，不影响使用。')
   }
   const stillAlive = isAlive(supervisorPid) || isAlive(dshPid)
-  console.log(stillAlive ? '停止请求已发出，但仍有进程存活（请检查 nomad status）。' : '已停止 Nomad。')
+  console.log(stillAlive
+    ? `${ui.glyphs().warn} 停止请求已发出，但仍有进程存活（请检查 nomad status）。`
+    : `${ui.glyphs().ok} 已停止 Nomad。`)
   return stillAlive ? 1 : 0
 }
 
@@ -584,7 +598,7 @@ async function cmdStatus(flags) {
   const state = readState(ctx.root)
   if (state === null) {
     if (flagBool(flags, ['json'])) console.log(JSON.stringify({ running: false }, null, 2))
-    else console.log('状态：未运行')
+    else console.log(`${ui.kv('状态', `${ui.glyphs().ring} 未运行`)}`)
     return 3
   }
 
@@ -614,17 +628,18 @@ async function cmdStatus(flags) {
     return running ? 0 : 3
   }
 
-  console.log(`状态：${running ? '运行中' : '已退出（状态文件残留）'}`)
-  console.log(`  地址     ${state.publicUrl ?? sanitizeUrl(state.url ?? '')}`)
-  console.log(`  HTTP     ${probe.reachable ? `可达（${String(probe.status)}）` : '不可达'}`)
-  console.log(`  认证     ${describeHandshake(state.webAuth)}`)
-  console.log(`  浏览器   ${describeHandoff(state.browserHandoff)}`)
-  console.log(`  监管进程 pid=${String(state.supervisorPid)} ${aliveSupervisor ? '存活' : '已退出'}`)
-  console.log(`  DSH 进程 pid=${String(state.dshPid)} ${aliveDsh ? '存活' : '已退出'}`)
-  console.log(`  运行时   ${String(state.runtime?.name ?? '?')} ${String(state.runtime?.version ?? '?')}`)
-  console.log(`  profile  ${String(state.profile ?? '?')}`)
-  console.log(`  启动于   ${String(state.startedAt ?? '?')}`)
-  console.log(`  日志     ${ctx.config.paths.logs}`)
+  const g = ui.glyphs()
+  console.log(ui.kv('状态', running ? `${g.dot} ${ui.tone.ok('运行中')}` : `${g.ring} ${ui.tone.fail('已退出')}（状态文件残留）`))
+  console.log(`  ${ui.kv('地址', ui.dim(state.publicUrl ?? sanitizeUrl(state.url ?? '')))}`)
+  console.log(`  ${ui.kv('HTTP', probe.reachable ? ui.tone.ok(`可达（${String(probe.status)}）`) : ui.tone.fail('不可达'))}`)
+  console.log(`  ${ui.kv('认证', describeHandshake(state.webAuth))}`)
+  console.log(`  ${ui.kv('浏览器', describeHandoff(state.browserHandoff))}`)
+  console.log(`  ${ui.kv('监管进程', `pid=${String(state.supervisorPid)} ${aliveSupervisor ? ui.tone.ok('存活') : ui.tone.fail('已退出')}`)}`)
+  console.log(`  ${ui.kv('DSH 进程', `pid=${String(state.dshPid)} ${aliveDsh ? ui.tone.ok('存活') : ui.tone.fail('已退出')}`)}`)
+  console.log(`  ${ui.kv('运行时', `${String(state.runtime?.name ?? '?')} ${String(state.runtime?.version ?? '?')}`)}`)
+  console.log(`  ${ui.kv('profile', String(state.profile ?? '?'))}`)
+  console.log(`  ${ui.kv('启动于', ui.dim(String(state.startedAt ?? '?')))}`)
+  console.log(`  ${ui.kv('日志', ui.dim(ctx.config.paths.logs))}`)
   return running ? 0 : 3
 }
 
@@ -661,12 +676,13 @@ async function cmdUpdate(flags) {
     return 1
   }
 
-  console.log(`正在查询 npm registry（${pkg}）……`)
+  const g = ui.glyphs()
+  console.log(`${ui.dim('◌')} 正在查询 npm registry（${pkg}）……`)
   const check = await updater.checkUpdate({ current, packageName: pkg })
 
   if (check.comparison === 'unknown') {
-    console.error(`查询失败：${check.error ?? '网络不可达'}`)
-    console.error('  --check 只读无害；查询需要能访问 npm registry（如走代理请先配好代理环境）。')
+    console.error(`${g.fail} 查询失败：${check.error ?? '网络不可达'}`)
+    console.error(`  ${ui.dim('--check 只读无害；查询需要能访问 npm registry（如走代理请先配好代理环境）。')}`)
     return 1
   }
 
@@ -679,26 +695,26 @@ async function cmdUpdate(flags) {
     console.error(`提示：检查结果落盘失败（不影响本次检查）：${error instanceof Error ? error.message : String(error)}`)
   }
 
-  console.log(`盘内当前      ${current}`)
-  console.log(`registry 最新 ${check.latest}`)
+  console.log(ui.kv('盘内当前', ui.bold(current)))
+  console.log(ui.kv('registry 最新', ui.bold(check.latest)))
   const available = listDshVersions(ctx.root, ctx.config)
-  console.log(`盘内已装      ${available.join(', ') || '(仅当前)'}`)
+  console.log(ui.kv('盘内已装', ui.dim(available.join(', ') || '(仅当前)')))
 
-  if (check.comparison === 'up-to-date') console.log('结论：已是最新版本。')
-  else if (check.comparison === 'current-newer') console.log('结论：盘内版本比 registry 最新还新（alpha/内部版），不动作。')
+  if (check.comparison === 'up-to-date') console.log(`${g.ok} 结论：${ui.tone.ok('已是最新版本')}`)
+  else if (check.comparison === 'current-newer') console.log(`${g.info} 结论：${ui.tone.accent('盘内版本比 registry 最新还新（alpha/内部版），不动作')}`)
   else {
-    console.log(`结论：可更新（${current} → ${check.latest}）。`)
-    console.log(`  升级：nomad update --yes   （下载 → 校验 → 解包 → 装依赖 → 改指针；旧版本保留可 rollback）`)
+    console.log(`${g.warn} 结论：${ui.tone.warn(`可更新（${current} ${g.arrow} ${check.latest}）`)}`)
+    console.log(`  ${ui.dim('升级：nomad update --yes   （下载 → 校验 → 解包 → 装依赖 → 改指针；旧版本保留可 rollback）')}`)
   }
   if (flagBool(flags, ['check'])) return 0
 
   if (flags.yes !== true) {
     console.error('')
-    console.error('实际升级被拒绝：缺少 --yes（铁律：升级必须维护者手动触发，绝不自动）。')
+    console.error(`${g.fail} 实际升级被拒绝：缺少 --yes（铁律：升级必须维护者手动触发，绝不自动）。`)
     return 1
   }
   if (check.updateAvailable !== true) {
-    console.error('无需升级（当前 >= registry 最新）。')
+    console.error(`${g.info} 无需升级（当前 >= registry 最新）。`)
     return 0
   }
 
@@ -722,11 +738,11 @@ async function cmdUpdate(flags) {
     console.error(`升级失败：${error instanceof Error ? error.message : String(error)}`)
     return 1
   }
-  console.log(`已升级 DSH 运行时：${current} → ${result.version}`)
-  console.log(`  版本目录 ${result.versionDir}（依赖树已重建）`)
-  console.log(`  指针文件 ${result.pointerFile}`)
-  console.log('  旧版本目录已保留：nomad rollback <旧版本> 可随时回退（回滚只影响下次启动）。')
-  console.log('  请执行 nomad start 以新版本启动。')
+  console.log(`${g.ok} 已升级 DSH 运行时：${ui.bold(current)} ${g.arrow} ${ui.tone.ok(ui.bold(result.version))}`)
+  console.log(`  ${ui.kv('版本目录', ui.dim(result.versionDir) + ui.dim('（依赖树已重建）'))}`)
+  console.log(`  ${ui.kv('指针文件', ui.dim(result.pointerFile))}`)
+  console.log(`  ${ui.dim('旧版本目录已保留：nomad rollback <旧版本> 可随时回退（回滚只影响下次启动）。')}`)
+  console.log(`  ${ui.dim('请执行 nomad start 以新版本启动。')}`)
   return 0
 }
 
@@ -744,11 +760,12 @@ function cmdRollback(flags, positionals) {
         return '(未知)'
       }
     })()
-    console.log(`当前 DSH 版本：${current}`)
-    console.log(`已安装版本：${available.join(', ') || '(仅 current)'}`)
+    const g = ui.glyphs()
+    console.log(ui.kv('当前 DSH 版本', ui.bold(current)))
+    console.log(ui.kv('已安装版本', ui.dim(available.join(', ') || '(仅 current)')))
     console.log('')
-    console.log('用法：nomad rollback <version>    （如 nomad rollback 0.2.1-alpha.1）')
-    console.log('      回滚只影响下次启动；正在运行的实例不受影响，请先 nomad stop。')
+    console.log(`  ${ui.dim('用法：nomad rollback <version>    （如 nomad rollback 0.2.1-alpha.1）')}`)
+    console.log(`  ${ui.dim('回滚只影响下次启动；正在运行的实例不受影响，请先 nomad stop。')}`)
     return 0
   }
 
@@ -762,12 +779,13 @@ function cmdRollback(flags, positionals) {
 
   try {
     const result = applyRollback(ctx.root, ctx.config, target)
-    console.log(`已回滚 DSH 运行时：${result.from} → ${result.to}`)
-    console.log(`  指针文件 ${result.file}`)
-    console.log('  下次启动将使用该版本。当前运行实例不受影响，需要切换请先 nomad stop 再 nomad start。')
+    const g = ui.glyphs()
+    console.log(`${g.ok} 已回滚 DSH 运行时：${ui.bold(result.from)} ${g.arrow} ${ui.tone.ok(ui.bold(result.to))}`)
+    console.log(`  ${ui.kv('指针文件', ui.dim(result.file))}`)
+    console.log(`  ${ui.dim('下次启动将使用该版本。当前运行实例不受影响，需要切换请先 nomad stop 再 nomad start。')}`)
     return 0
   } catch (error) {
-    console.error(`回滚失败：${error instanceof Error ? error.message : String(error)}`)
+    console.error(`${ui.glyphs().fail} 回滚失败：${error instanceof Error ? error.message : String(error)}`)
     return 1
   }
 }
@@ -785,19 +803,20 @@ function cmdBackup(flags) {
   const alive = state !== null && (isAlive(Number(state.supervisorPid)) || isAlive(Number(state.dshPid)))
   try {
     const result = createBackup(ctx.root, ctx.config, { includeConfig, to })
-    console.log(`已备份到：${result.dir}`)
+    const g = ui.glyphs()
+    console.log(`${g.ok} 已备份到：${ui.dim(result.dir)}`)
     for (const item of result.manifest.items) {
-      console.log(`  + ${item.relPath}（${String(item.files)} 个文件）`)
+      console.log(`  ${g.ok} ${item.relPath} ${ui.dim(`（${String(item.files)} 个文件）`)}`)
     }
-    for (const warning of result.warnings) console.log(`  ⚠ ${warning}`)
+    for (const warning of result.warnings) console.log(`  ${g.warn} ${warning}`)
     if (alive) {
       console.log('')
-      console.log('  ⚠ Nomad 正在运行，本次为运行期快照，可能捕获到写入中途的文件。')
-      console.log('    需要一致性快照时，请先 `nomad stop` 再备份。')
+      console.log(`  ${g.warn} Nomad 正在运行，本次为运行期快照，可能捕获到写入中途的文件。`)
+      console.log(`    ${ui.dim('需要一致性快照时，请先 `nomad stop` 再备份。')}`)
     }
     return 0
   } catch (error) {
-    console.error(`备份失败：${error instanceof Error ? error.message : String(error)}`)
+    console.error(`${ui.glyphs().fail} 备份失败：${error instanceof Error ? error.message : String(error)}`)
     return 1
   }
 }
@@ -824,10 +843,10 @@ function cmdRestore(flags, positionals) {
   }
   try {
     const result = restoreBackup(ctx.root, ctx.config, backupDir)
-    console.log(`已从 ${backupDir} 恢复 ${String(result.restored)} 个文件（合并复制：覆盖已有、不删除多余）。`)
+    console.log(`${ui.glyphs().ok} 已从 ${ui.dim(backupDir)} 恢复 ${ui.tone.ok(String(result.restored))} 个文件（合并复制：覆盖已有、不删除多余）。`)
     return 0
   } catch (error) {
-    console.error(`恢复失败：${error instanceof Error ? error.message : String(error)}`)
+    console.error(`${ui.glyphs().fail} 恢复失败：${error instanceof Error ? error.message : String(error)}`)
     return 1
   }
 }
@@ -847,19 +866,20 @@ function cmdProjects(flags) {
     return 1
   }
   if (parsed === null) {
-    console.log('尚未发现任何持久化的工作区（DSH 可能还未初始化过项目）。')
-    console.log(`  清单预期位置：${path.join(ctx.config.paths.dsh_home, 'storages', 'workspace.json')}`)
+    console.log(`${ui.glyphs().ring} 尚未发现任何持久化的工作区（DSH 可能还未初始化过项目）。`)
+    console.log(`  ${ui.dim(`清单预期位置：${path.join(ctx.config.paths.dsh_home, 'storages', 'workspace.json')}`)}`)
     return 0
   }
-  console.log(`已持久化工作区：${String(parsed.workspaces.length)} 个，共 ${String(parsed.totalSessions)} 个会话`)
-  console.log(`（数据位于盘内 ${ctx.config.paths.dsh_home}，runtime 升级不丢失）`)
+  const g = ui.glyphs()
+  console.log(`${g.brand} 已持久化工作区：${ui.bold(String(parsed.workspaces.length))} 个，共 ${ui.bold(String(parsed.totalSessions))} 个会话`)
+  console.log(`  ${ui.dim(`（数据位于盘内 ${ctx.config.paths.dsh_home}，runtime 升级不丢失）`)}`)
   console.log('')
   for (const ws of parsed.workspaces) {
-    const mark = ws.id === parsed.defaultId ? ' [默认]' : ''
-    console.log(`• ${ws.title}${mark}`)
-    console.log(`    路径     ${ws.path}`)
-    console.log(`    会话数   ${String(ws.sessionCount)}`)
-    if (ws.updatedAt !== null) console.log(`    更新于   ${String(ws.updatedAt)}`)
+    const mark = ws.id === parsed.defaultId ? ui.tone.accent(' [默认]') : ''
+    console.log(`${g.bullet} ${ui.bold(ws.title)}${mark}`)
+    console.log(`    ${ui.kv('路径', ui.dim(ws.path), 8)}`)
+    console.log(`    ${ui.kv('会话数', String(ws.sessionCount), 8)}`)
+    if (ws.updatedAt !== null) console.log(`    ${ui.kv('更新于', ui.dim(String(ws.updatedAt)), 8)}`)
   }
   return 0
 }
@@ -920,30 +940,32 @@ async function main() {
     case 'env': {
       const ctx = resolveContext(flags)
       const built = buildEnv({ root: ctx.root, isolation: ctx.config.isolation })
-      console.log('隔离环境计划：')
+      console.log(ui.title('隔离环境计划'))
       for (const line of describePlan(built.report, ctx.config.isolation.override, ctx.root)) console.log(`  ${line}`)
       console.log('')
-      console.log('实际注入子进程的环境（已脱敏）：')
+      console.log(ui.title('实际注入子进程的环境（已脱敏）'))
       console.log(JSON.stringify(redactEnv(built.env), null, 2))
       break
     }
     case 'paths': {
       const ctx = resolveContext(flags)
-      console.log(`NOMAD_ROOT  ${ctx.root}（来源 ${ctx.source}）`)
-      console.log('路径：')
-      for (const [key, value] of Object.entries(ctx.config.paths)) console.log(`  ${key.padEnd(10)} ${value}`)
-      console.log(`Node  ${ctx.runtime.node.path}（${ctx.runtime.node.version ?? '版本未探测'}，${ctx.runtime.node.source}）`)
+      const g = ui.glyphs()
+      console.log(`${g.brand} ${ui.kv('NOMAD_ROOT', ui.dim(`${ctx.root}（来源 ${ctx.source}）`))}`)
+      console.log('')
+      console.log(ui.title('路径'))
+      for (const [key, value] of Object.entries(ctx.config.paths)) console.log(`  ${ui.kv(key, ui.dim(value))}`)
+      console.log(`  ${ui.kv('Node', `${ui.dim(ctx.runtime.node.path)} ${ui.dim(`（${ctx.runtime.node.version ?? '版本未探测'}，${ctx.runtime.node.source}）`)}`)}`)
       try {
         const info = inspectNomadProfile({ root: ctx.root, config: ctx.config })
-        console.log(`profile  ${info.spec.name} → ${info.spec.dir}（模板 ${info.spec.template}，自研层 ${info.spec.bundleSpec}）`)
+        console.log(`  ${ui.kv('profile', `${info.spec.name} ${ui.dim(`→ ${info.spec.dir}（模板 ${info.spec.template}，自研层 ${info.spec.bundleSpec}）`)}`)}`)
       } catch (error) {
-        console.log(`profile  ✗ ${error instanceof Error ? error.message : String(error)}`)
+        console.log(`  ${ui.kv('profile', `${g.fail} ${error instanceof Error ? error.message : String(error)}`)}`)
       }
       if (ctx.runtime.dsh.missing === true) {
-        console.log(`DSH   ✗ ${ctx.runtime.dsh.reason ?? '缺失'}`)
+        console.log(`  ${ui.kv('DSH', `${g.fail} ${ctx.runtime.dsh.reason ?? '缺失'}`)}`)
       } else {
-        console.log(`DSH   ${ctx.runtime.dsh.name} ${ctx.runtime.dsh.version}`)
-        console.log(`入口  ${ctx.runtime.dsh.entry}（${ctx.runtime.dsh.entrySource}）`)
+        console.log(`  ${ui.kv('DSH', `${ctx.runtime.dsh.name} ${ctx.runtime.dsh.version}`)}`)
+        console.log(`  ${ui.kv('入口', ui.dim(`${ctx.runtime.dsh.entry}（${ctx.runtime.dsh.entrySource}）`))}`)
       }
       break
     }
@@ -955,19 +977,23 @@ async function main() {
       // -- profile list：列出盘内全部 profile（Phase 3.1）
       if (sub === 'list') {
         const scan = listProfiles({ root: ctx.root, config: ctx.config })
-        console.log(`profile 根目录  ${scan.base}`)
-        console.log(`启动默认        ${scan.defaultName}`)
-        console.log(`内置保留名（模板，不在盘内列举）  ${scan.reserved.join(' / ')}`)
+        const g = ui.glyphs()
+        console.log(ui.kv('profile 根目录', ui.dim(scan.base), 16))
+        console.log(ui.kv('启动默认', ui.bold(scan.defaultName), 16))
+        console.log(ui.kv('内置保留名', ui.dim(`${scan.reserved.join(' / ')}（模板，不在盘内列举）`), 16))
         if (scan.profiles.length === 0) {
-          console.log('盘内暂无 profile —— start 会按模板自动创建。')
+          console.log('')
+          console.log(`${g.ring} 盘内暂无 profile —— start 会按模板自动创建。`)
           break
         }
         console.log('')
         for (const item of scan.profiles) {
-          const tag = item.kind === 'default' ? ' [启动默认]' : ''
-          const state = item.problems.length === 0 ? '有效' : `⚠ ${item.problems.length} 个问题`
-          console.log(`${item.name}${tag}  ${state}`)
-          for (const problem of item.problems) console.log(`    - ${problem}`)
+          const tag = item.kind === 'default' ? ui.tone.accent(' [启动默认]') : ''
+          const state = item.problems.length === 0
+            ? ui.tone.ok('有效')
+            : `${g.warn} ${ui.tone.warn(`${item.problems.length} 个问题`)}`
+          console.log(`${g.bullet} ${ui.bold(item.name)}${tag}  ${state}`)
+          for (const problem of item.problems) console.log(`      ${ui.dim(`- ${problem}`)}`)
         }
         break
       }
@@ -987,9 +1013,10 @@ async function main() {
           code = 1
           break
         }
-        console.log(`profile「${result.name}」已创建（派生自 ${result.template}）：${result.dir}`)
-        console.log(`  bundles: ${result.bundles.join(', ')}`)
-        for (const file of result.created) console.log(`  + ${file}`)
+        const g = ui.glyphs()
+        console.log(`${g.ok} profile「${ui.bold(result.name)}」已创建（派生自 ${result.template}）：${ui.dim(result.dir)}`)
+        console.log(`  ${ui.kv('bundles', ui.dim(result.bundles.join(', ')), 10)}`)
+        for (const file of result.created) console.log(`  ${g.ok} ${ui.dim(file)}`)
         break
       }
 
@@ -1008,13 +1035,14 @@ async function main() {
           code = 1
           break
         }
-        console.log(`profile ${name}  ${check.dir}`)
-        console.log(`  bundles(${check.bundles.length}): ${check.bundles.join(', ') || '(无)'}`)
+        const g = ui.glyphs()
+        console.log(`${ui.kv('profile', `${ui.bold(name)}  ${ui.dim(check.dir)}`)}`)
+        console.log(`  ${ui.kv(`bundles(${String(check.bundles.length)})`, ui.dim(check.bundles.join(', ') || '(无)'), 14)}`)
         if (check.problems.length === 0) {
-          console.log('  结论：有效')
+          console.log(`  ${g.ok} 结论：${ui.tone.ok('有效')}`)
         } else {
-          console.log('  结论：存在问题')
-          for (const problem of check.problems) console.log(`    - ${problem}`)
+          console.log(`  ${g.fail} 结论：${ui.tone.fail('存在问题')}`)
+          for (const problem of check.problems) console.log(`      ${ui.dim(`- ${problem}`)}`)
           code = 1
         }
         break
@@ -1046,18 +1074,20 @@ async function main() {
         break
       }
       console.log('')
-      console.log(`profile      ${info.spec.name}（派生自内置模板 ${info.spec.template}）`)
-      console.log(`目录         ${info.spec.dir}`)
-      console.log(`自研 bundle  ${info.spec.bundleSpec}`)
-      console.log(`             → ${info.spec.bundleSourceDir}`)
-      console.log(`清单         ${info.exists ? (info.manifestValid ? '存在且可解析' : '存在但不可解析（JSON 坏了）') : '不存在'}`)
+      console.log(`${ui.glyphs().brand} ${ui.bold('Nomad profile')}`)
+      console.log(`  ${ui.kv('profile', `${ui.bold(info.spec.name)} ${ui.dim(`（派生自内置模板 ${info.spec.template}）`)}`, 14)}`)
+      console.log(`  ${ui.kv('目录', ui.dim(info.spec.dir), 14)}`)
+      console.log(`  ${ui.kv('自研 bundle', info.spec.bundleSpec, 14)}`)
+      console.log(`  ${ui.kv('', ui.dim(`→ ${info.spec.bundleSourceDir}`), 14)}`)
+      console.log(`  ${ui.kv('清单', info.exists ? (info.manifestValid ? ui.tone.ok('存在且可解析') : ui.tone.fail('存在但不可解析（JSON 坏了）')) : ui.dim('不存在'), 14)}`)
       if (info.exists && info.manifestValid) {
         for (const [index, bundle] of info.bundles.entries()) {
-          console.log(`  ${String(index + 1)}. ${bundle}${bundle === info.spec.bundleSpec ? '   ← 自研层' : ''}`)
+          const self = bundle === info.spec.bundleSpec ? ui.tone.accent('   ← 自研层') : ''
+          console.log(`      ${ui.dim(`${String(index + 1)}.`)} ${bundle}${self}`)
         }
       }
-      console.log(`补丁层       ${info.patchExists ? info.spec.patchPath : '(缺失 —— start 会补)'}`)
-      console.log(`结论         ${info.problems.length === 0 ? '就绪：自研层已在 bundles 末位' : info.problems.join('；')}`)
+      console.log(`  ${ui.kv('补丁层', info.patchExists ? ui.dim(info.spec.patchPath) : ui.tone.warn('(缺失 —— start 会补)'), 14)}`)
+      console.log(`  ${ui.kv('结论', info.problems.length === 0 ? ui.tone.ok('就绪：自研层已在 bundles 末位') : ui.tone.warn(info.problems.join('；')), 14)}`)
       break
     }
     case 'skill': {
@@ -1067,14 +1097,15 @@ async function main() {
 
       const renderSkillList = () => {
         const scan = listSkills({ root: ctx.root, config: ctx.config })
-        console.log(`skill 根目录   ${scan.base}`)
-        console.log('（user-dsh 根，rank 400；DSH 文件 watch 热更新 —— 装/删无需重启实例）')
+        const g = ui.glyphs()
+        console.log(`${g.brand} ${ui.bold('Skills')} ${ui.dim('（user-dsh 根，rank 400；DSH 文件 watch 热更新 —— 装/删无需重启实例）')}`)
+        console.log(`  ${ui.kv('skill 根目录', ui.dim(scan.base), 14)}`)
         if (!scan.exists) {
-          console.log('目录尚未创建 —— 首次 nomad skill add 时自动创建；当前视为空 skill 根。')
+          console.log(`  ${g.ring} 目录尚未创建 —— 首次 nomad skill add 时自动创建；当前视为空 skill 根。`)
           return
         }
         if (scan.skills.length === 0 && scan.ignored.length === 0) {
-          console.log('（空 skill 根，合法基线）')
+          console.log(`  ${g.ring} 空 skill 根，合法基线`)
           return
         }
         if (scan.skills.length > 0) console.log('')
@@ -1084,21 +1115,21 @@ async function main() {
             : item.skill.name === item.entryName
               ? item.skill.name
               : `${item.skill.name}（条目名 ${item.entryName}）`
-          const state = item.valid ? '有效' : `⚠ ${item.problems.length} 个问题`
-          console.log(`${identity}  [${item.kind === 'bundle' ? '目录束' : '扁平'}]  ${state}`)
+          const state = item.valid ? ui.tone.ok('有效') : `${g.warn} ${ui.tone.warn(`${item.problems.length} 个问题`)}`
+          console.log(`${g.bullet} ${ui.bold(identity)}  ${ui.dim(`[${item.kind === 'bundle' ? '目录束' : '扁平'}]`)}  ${state}`)
           if (item.skill !== undefined && item.skill !== null && item.skill.description !== undefined) {
-            console.log(`    描述   ${item.skill.description}`)
+            console.log(`      ${ui.kv('描述', ui.dim(item.skill.description), 8)}`)
           }
           if (item.skill !== undefined && item.skill !== null && item.skill.whenToUse !== undefined) {
-            console.log(`    何时用 ${item.skill.whenToUse}`)
+            console.log(`      ${ui.kv('何时用', ui.dim(item.skill.whenToUse), 8)}`)
           }
-          for (const problem of item.problems) console.log(`    - ${problem}`)
-          for (const note of item.notes ?? []) console.log(`    · ${note}`)
+          for (const problem of item.problems) console.log(`      ${ui.dim(`- ${problem}`)}`)
+          for (const note of item.notes ?? []) console.log(`      ${g.bullet} ${ui.dim(note)}`)
         }
         if (scan.ignored.length > 0) {
           console.log('')
-          console.log('被忽略的条目（DSH 不会看）：')
-          for (const item of scan.ignored) console.log(`  ${item.entryName}  —— ${item.reason}`)
+          console.log(ui.tone.warn('被忽略的条目（DSH 不会看）：'))
+          for (const item of scan.ignored) console.log(`  ${g.skip} ${item.entryName}  ${ui.dim(`—— ${item.reason}`)}`)
         }
       }
 
@@ -1119,15 +1150,16 @@ async function main() {
         }
         const result = addSkill({ root: ctx.root, config: ctx.config }, source)
         if (!result.ok) {
-          console.error(`安装失败：${result.error}`)
+          console.error(`${ui.glyphs().fail} 安装失败：${result.error}`)
           code = 1
           break
         }
-        console.log(`skill「${result.name}」已安装：${result.dir}（${result.format === 'bundle' ? '目录束' : '扁平文件'}）`)
+        const g = ui.glyphs()
+        console.log(`${g.ok} skill「${ui.bold(result.name)}」已安装：${ui.dim(result.dir)}（${result.format === 'bundle' ? '目录束' : '扁平文件'}）`)
         if (result.skill !== undefined && result.skill !== null) {
-          console.log(`  描述 ${result.skill.description}`)
+          console.log(`  ${ui.kv('描述', ui.dim(result.skill.description), 6)}`)
         }
-        console.log('  热生效：运行中的实例会通过文件 watch 自动感知，无需重启。')
+        console.log(`  ${ui.dim('热生效：运行中的实例会通过文件 watch 自动感知，无需重启。')}`)
         break
       }
 
@@ -1141,12 +1173,12 @@ async function main() {
         }
         const result = removeSkill({ root: ctx.root, config: ctx.config }, name)
         if (!result.ok) {
-          console.error(`卸载失败：${result.error}`)
+          console.error(`${ui.glyphs().fail} 卸载失败：${result.error}`)
           code = 1
           break
         }
-        console.log(`skill「${result.name}」已卸载：${result.path}（${result.format === 'bundle' ? '目录束' : '扁平文件'}）`)
-        console.log('  热生效：运行中的实例会自动感知，无需重启。')
+        console.log(`${ui.glyphs().ok} skill「${ui.bold(result.name)}」已卸载：${ui.dim(result.path)}（${result.format === 'bundle' ? '目录束' : '扁平文件'}）`)
+        console.log(`  ${ui.dim('热生效：运行中的实例会自动感知，无需重启。')}`)
         break
       }
 
@@ -1161,7 +1193,9 @@ async function main() {
       // -- nomad storage（无参数 = 数据全景报告）
       if (sub === undefined || sub === 'report') {
         const report = storageReport({ root: ctx.root, config: ctx.config })
-        console.log(`数据全景（NOMAD_ROOT = ${report.root}）`)
+        const g = ui.glyphs()
+        console.log(`${g.brand} ${ui.bold('数据全景')} ${ui.dim(`（NOMAD_ROOT = ${report.root}）`)}`)
+        console.log('')
         const catLabel = {
           'long-term': '长期-核心（永不清理）',
           cleanable: '可清理（storage clean 白名单）',
@@ -1169,16 +1203,23 @@ async function main() {
           runtime: '运行时态',
           other: '其他（白名单外，请人工确认）',
         }
+        const catPaint = {
+          'long-term': (s) => ui.tone.ok(s),
+          cleanable: (s) => ui.tone.warn(s),
+          rotate: (s) => ui.tone.accent(s),
+          runtime: (s) => ui.dim(s),
+          other: (s) => ui.tone.fail(s),
+        }
         for (const entry of report.entries) {
           if (!entry.exists) {
-            console.log(`  ${entry.rel.padEnd(34)} （不存在）`)
+            console.log(`  ${ui.padEnd(entry.rel, 34)} ${ui.dim('（不存在）')}`)
             continue
           }
           const latest = entry.mtimeMs > 0 ? new Date(entry.mtimeMs).toISOString().replace('T', ' ').slice(0, 16) : '—'
-          console.log(`  ${entry.rel.padEnd(34)} ${humanBytes(entry.bytes).padStart(9)}  ${String(entry.files).padStart(5)} 文件  最近写入 ${latest}  [${catLabel[entry.category]}]`)
+          console.log(`  ${ui.padEnd(entry.rel, 34)} ${ui.bold(ui.padStart(humanBytes(entry.bytes), 9))}  ${ui.dim(`${String(entry.files).padStart(5)} 文件`)}  ${ui.dim(`最近写入 ${latest}`)}  ${catPaint[entry.category](catLabel[entry.category])}`)
         }
         console.log('')
-        console.log(`可清理合计：${report.human.cleanable} / ${report.cleanableFiles} 文件（预览：nomad storage clean --dry-run）`)
+        console.log(`${g.ok} 可清理合计：${ui.tone.warn(report.human.cleanable)} ${ui.dim('/')} ${report.cleanableFiles} 文件 ${ui.dim('（预览：nomad storage clean --dry-run）')}`)
         break
       }
 
@@ -1194,25 +1235,26 @@ async function main() {
           break
         }
         const result = clean({ root: ctx.root, config: ctx.config }, { dryRun, minAgeMs })
-        console.log(`清理范围（白名单，绝不进 sessions/profiles/skills）：data/tmp、data/dsh-home/tmp`)
-        console.log(`时间规则：只清「整条目 ${Math.round(result.minAgeMs / 60000)} 分钟内无任何写入」的条目`)
+        const g = ui.glyphs()
+        console.log(`${ui.dim('清理范围（白名单，绝不进 sessions/profiles/skills）：')} data/tmp、data/dsh-home/tmp`)
+        console.log(`${ui.dim(`时间规则：只清「整条目 ${Math.round(result.minAgeMs / 60000)} 分钟内无任何写入」的条目`)}`)
         console.log('')
         if (result.targets.length === 0) {
-          console.log('没有满足条件的清理目标（干净基线）。')
+          console.log(`${g.ok} 没有满足条件的清理目标（干净基线）。`)
         }
         for (const target of result.targets) {
-          console.log(`  [将删] ${target.rel}  ${humanBytes(target.bytes)} / ${target.files} 文件`)
+          console.log(`  ${ui.tone.warn('[将删]')} ${target.rel}  ${ui.bold(humanBytes(target.bytes))} ${ui.dim(`/ ${target.files} 文件`)}`)
         }
         for (const item of result.skipped) {
-          console.log(`  [跳过] ${item.rel}  —— ${item.reason}`)
+          console.log(`  ${ui.dim('[跳过]')} ${ui.dim(item.rel)}  ${ui.dim(`—— ${item.reason}`)}`)
         }
         console.log('')
         if (dryRun) {
-          console.log(`dry-run 合计：${humanBytes(result.totalBytes)} / ${result.totalFiles} 文件（未删除任何内容）。`)
-          console.log('确认无误后加 --yes 实际执行。')
+          console.log(`${g.info} dry-run 合计：${ui.bold(humanBytes(result.totalBytes))} / ${result.totalFiles} 文件 ${ui.dim('（未删除任何内容）。')}`)
+          console.log(`  ${ui.dim('确认无误后加 --yes 实际执行。')}`)
         } else {
-          for (const failure of result.failures) console.error(`  [失败] ${failure.abs}: ${failure.error}`)
-          console.log(`已清理：${humanBytes(result.freedBytes)} / ${result.freedFiles} 文件${result.failures.length > 0 ? `（${result.failures.length} 项失败）` : ''}。`)
+          for (const failure of result.failures) console.error(`  ${ui.tone.fail('[失败]')} ${failure.abs}: ${failure.error}`)
+          console.log(`${g.ok} 已清理：${ui.tone.ok(ui.bold(humanBytes(result.freedBytes)))} / ${result.freedFiles} 文件${result.failures.length > 0 ? ui.tone.fail(`（${result.failures.length} 项失败）`) : ''}。`)
           if (result.failures.length > 0) code = 1
         }
         break
@@ -1232,19 +1274,19 @@ async function main() {
       const ctx = resolveContext(flags)
       const state = readState(ctx.root)
       if (state === null || state.url === undefined) {
-        console.error('没有可用的访问地址（实例未运行）。')
+        console.error(`${ui.glyphs().fail} 没有可用的访问地址（实例未运行）。`)
         code = 3
         break
       }
       console.log(state.url)
-      console.error('# 该地址含本次启动令牌（用于给浏览器铸 cookie），请勿外传或截图。')
+      console.error(`${ui.dim('# 该地址含本次启动令牌（用于给浏览器铸 cookie），请勿外传或截图。')}`)
       break
     }
     case 'open': {
       const ctx = resolveContext(flags)
       const state = readState(ctx.root)
       if (state === null || state.url === undefined) {
-        console.error('实例未运行，无地址可打开。')
+        console.error(`${ui.glyphs().fail} 实例未运行，无地址可打开。`)
         code = 3
         break
       }
@@ -1256,13 +1298,14 @@ async function main() {
         logger: { warn: (message) => console.error(message), info: () => {} },
       })
       if (!result.ok) {
-        console.error(`打开失败（${result.method}）：${result.error ?? '未知原因'}`)
-        console.error('  备用通道：执行 `nomad url` 拿到**含 token** 的完整地址，手动粘进浏览器地址栏。')
-        console.error('  若浏览器被安全软件拦截，可在 config/nomad.yaml 设置 web.browser_path 指向浏览器可执行文件。')
+        console.error(`${ui.glyphs().fail} 打开失败（${result.method}）：${result.error ?? '未知原因'}`)
+        console.error(`  ${ui.dim('备用通道：执行 `nomad url` 拿到**含 token** 的完整地址，手动粘进浏览器地址栏。')}`)
+        console.error(`  ${ui.dim('若浏览器被安全软件拦截，可在 config/nomad.yaml 设置 web.browser_path 指向浏览器可执行文件。')}`)
         code = 1
       } else {
-        console.log(`已请求系统打开浏览器（${result.method}）。`)
-        console.log(`  地址（脱敏）${state.publicUrl ?? sanitizeUrl(state.url)}`)
+        const g = ui.glyphs()
+        console.log(`${g.ok} 已请求系统打开浏览器（${result.method}）。`)
+        console.log(`  ${ui.kv('地址（脱敏）', ui.dim(state.publicUrl ?? sanitizeUrl(state.url)))}`)
         console.log('  若浏览器仍显示 "authentication required"，只有两种可能，逐一排除：')
         console.log('    ① 地址没带令牌 —— 同一地址**不带** `?token=…` 必然 401，这是 DSH 的鉴权设计，请在地址栏确认 query 还在；')
         console.log('    ② 浏览器拒收 cookie —— 该会话 cookie 是 `dsh-auth-…`（HttpOnly + SameSite=Strict，无 Secure）。')
@@ -1272,20 +1315,22 @@ async function main() {
     }
     case 'version': {
       const { root } = detectRoot({ explicit: flagValue(flags, 'root') })
-      console.log(`Nomad        ${readNomadVersion(root)}`)
-      console.log(`Launcher     ${LAUNCHER_VERSION}`)
-      console.log(`Node         ${process.versions.node}（${process.execPath}）`)
-      console.log(`Platform     ${process.platform} ${process.arch}`)
-      console.log(`今天         ${localDate()}`)
+      const g = ui.glyphs()
+      console.log(`${g.brand} ${ui.bold('Nomad')} ${ui.dim('— Portable Agent OS')}`)
+      console.log(`  ${ui.kv('Nomad', ui.bold(readNomadVersion(root)))}`)
+      console.log(`  ${ui.kv('Launcher', LAUNCHER_VERSION)}`)
+      console.log(`  ${ui.kv('Node', `${process.versions.node} ${ui.dim(`（${process.execPath}）`)}`)}`)
+      console.log(`  ${ui.kv('Platform', `${process.platform} ${process.arch}`)}`)
+      console.log(`  ${ui.kv('今天', ui.dim(localDate()))}`)
       break
     }
     case 'help':
-      console.log(HELP)
+      console.log(buildHelp())
       break
     default:
-      console.error(`未知命令：${command}`)
+      console.error(`${ui.glyphs().fail} 未知命令：${command}`)
       console.error('')
-      console.error(HELP)
+      console.error(buildHelp())
       code = 64
   }
   process.exitCode = code

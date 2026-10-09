@@ -18,6 +18,7 @@ const { probeHttp } = require('./probe.js')
 const { sanitizeUrl } = require('./dsh-url.js')
 const { buildOpenCommand } = require('./browser.js')
 const { verifyAuthHandshake, describeHandshake } = require('./web-auth.js')
+const ui = require('./cli-ui.js')
 const {
   scanBrokenPackages,
   scanMissingPackages,
@@ -567,16 +568,27 @@ async function runDoctor(options) {
  * @returns {string} 文本
  */
 function renderDoctor(report) {
-  const glyph = { pass: '[ OK ]', warn: '[WARN]', fail: '[FAIL]', skip: '[ -- ]' }
+  // systemd 风格体检表：彩色 ✓/⚠/✗ 状态列 + 缩进明细 + 语义色汇总行。
+  // 颜色关闭（管道/重定向）时由 cli-ui 自动回退 ASCII（[OK]/[!]/[X]），机器可读性不变。
+  const g = ui.glyphs()
+  const glyph = { pass: g.ok, warn: g.warn, fail: g.fail, skip: g.skip }
   const lines = []
+  lines.push(`${g.brand} ${ui.bold('Nomad Doctor')}`)
+  lines.push('')
   for (const item of report.results) {
-    lines.push(`${glyph[item.status]} ${item.title}`)
-    for (const line of String(item.detail).split('\n')) lines.push(`       ${line}`)
-    if (item.hint !== '') lines.push(`       → ${item.hint}`)
+    lines.push(`  ${glyph[item.status]} ${ui.bold(item.title)}`)
+    for (const line of String(item.detail).split('\n')) lines.push(`       ${ui.dim(line)}`)
+    if (item.hint !== '') lines.push(`       ${g.arrow} ${ui.dim(item.hint)}`)
     lines.push('')
   }
   const { pass, warn, fail, skip } = report.summary
-  lines.push(`合计：通过 ${String(pass)} / 警告 ${String(warn)} / 失败 ${String(fail)} / 跳过 ${String(skip)}`)
+  lines.push(
+    `${ui.bold('合计')}  `
+    + `${ui.tone.ok(`通过 ${String(pass)}`)}  `
+    + `${warn > 0 ? ui.tone.warn(`警告 ${String(warn)}`) : ui.dim(`警告 ${String(warn)}`)}  `
+    + `${fail > 0 ? ui.tone.fail(`失败 ${String(fail)}`) : ui.dim(`失败 ${String(fail)}`)}  `
+    + `${ui.dim(`跳过 ${String(skip)}`)}`
+  )
   return lines.join('\n')
 }
 
