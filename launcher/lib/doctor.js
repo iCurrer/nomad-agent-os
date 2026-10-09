@@ -26,6 +26,7 @@ const {
 } = require('./runtime.js')
 const { inspectNomadProfile, listProfiles } = require('./profile.js')
 const { listSkills } = require('./skills.js')
+const { loadPermissions, selfCheckNever, describePermissions } = require('./permissions.js')
 const { dataSummary, WARN_TMP_BYTES, WARN_TMP_FILES } = require('./dataman.js')
 
 /** 状态标识。 */
@@ -360,6 +361,43 @@ async function runDoctor(options) {
       FAIL,
       error instanceof Error ? error.message : String(error),
       '检查 data 目录权限 / 磁盘状态',
+    )
+  }
+
+  // 21. 权限档位与 never 自证（3.4）
+  //   只读展示 config/permissions.yaml 生效档位 + 用已有机制机械自证 never 清单。
+  //   禁止自造桥接（3.0-C）：本项绝不把 Nomad 8 级模板换算成上游 SandboxMode/ApprovalPolicy。
+  try {
+    const perm = loadPermissions({ root })
+    const envReport = buildEnv({ root, isolation: config.isolation }).report
+    const checks = selfCheckNever(perm, { config, envReport, runtime })
+    const detail = describePermissions(perm, checks).join('\n')
+    if (perm.problems.length > 0) {
+      add(
+        'permissions',
+        '权限档位',
+        WARN,
+        `${detail}\n模板问题: ${perm.problems.join('；')}`,
+        '修正 config/permissions.yaml 的非法值（doctor 第 21 项会重查）',
+      )
+    } else if (checks.some((check) => check.verifiable && !check.ok)) {
+      add(
+        'permissions',
+        '权限档位',
+        FAIL,
+        `${detail}\nnever 清单存在失去机械支撑的条目（见 ✗ 行）`,
+        '恢复宿主隔离 / 路径守卫 / 版本锁定后再复查',
+      )
+    } else {
+      add('permissions', '权限档位', PASS, detail)
+    }
+  } catch (error) {
+    add(
+      'permissions',
+      '权限档位',
+      FAIL,
+      error instanceof Error ? error.message : String(error),
+      '检查 config/permissions.yaml 是否可读',
     )
   }
 

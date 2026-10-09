@@ -272,10 +272,17 @@ Launcher 自举 `nomad` profile 已被真实 DSH 加载；`web` 是**内置保�
 事件溯源的 `sandbox/mode` session 事件）。**Nomad 的 8 级模型与上游不对应，
 禁止 launcher 侧自造桥接改写上游旋钮**（会对抗其事件溯源设计）。
 
-- [ ] 按 3.0 结论接线：launcher 在 `--dry-run` 与 `doctor` 中展示生效的权限档位（最低限度）；
-      若上游有原生 approval 机制则评估桥接而非自造
-- [ ] `never` 清单（改环境变量/改注册表）至少在 `doctor` 中自证与宿主隔离约束一致
-- [ ] 单测覆盖配置解析与非法值拒绝
+- [x] 按 3.0 结论接线：launcher 在 `--dry-run` 与 `doctor` 中展示生效的权限档位（最低限度）；
+      若上游有原生 approval 机制则评估桥接而非自造 —— **（2026-10-09 完成**：
+      `launcher/lib/permissions.js` 只读展示 + never 机械自证；**明确不桥接**——上游
+      SandboxMode × ApprovalPolicy 是事件溯源设计，Nomad 8 级模板保持契约声明身份，
+      上游原生体系才是生效面。自证锚点：宿主隔离 allowlist（modify_system_env/registry）、
+      路径守卫（write_outside）、清单指针 + track_master=false（upgrade_dsh_master）；
+      delete_user_data/auto_git_push 无机械锚点，诚实标注「契约级约束」不假装通过）
+- [x] `never` 清单（改环境变量/改注册表）至少在 `doctor` 中自证与宿主隔离约束一致 ——
+      **（并入上条：doctor 第 21 项逐条 ✓/✗ 展示，失锚条目 FAIL）**
+- [x] 单测覆盖配置解析与非法值拒绝 —— **（tests/permissions.test.js 10 例：未知类别/
+      未知取值/未知 never id/重复条目/敏感类别提升为 allow/缺类别/文件缺失/顶层非映射）**
 
 ### 3.5 Runtime Manager（CLI 已有底子，补"更新"与自动化）
 
@@ -334,8 +341,8 @@ Launcher 自举 `nomad` profile 已被真实 DSH 加载；`web` 是**内置保�
 - [x] CLI（`nomad start/stop/restart/status/doctor/env/paths/logs/url/open/version` **+ 2026-10-08 新增
       `rollback` / `backup` / `restore` / `projects`**）
 - [x] Logs（监管日志 + DSH 原始输出 + 尾部查看）
-- [x] Doctor（只读体检，**20 项**：含宿主污染探针、**盘内字面量目录巡检**、**全部 profile 巡检（3.1）**、运行时包完整性（**锁文件对账**）、
-      Nomad profile 巡检、浏览器交接命令、Web 认证握手、**Skills 巡检（3.2）**、**数据面巡检（3.3）**）
+- [x] Doctor（只读体检，**21 项**：含宿主污染探针、**盘内字面量目录巡检**、**全部 profile 巡检（3.1）**、运行时包完整性（**锁文件对账**）、
+      Nomad profile 巡检、浏览器交接命令、Web 认证握手、**Skills 巡检（3.2）**、**数据面巡检（3.3）**、**权限档位与 never 自证（3.4）**）
       > 2026-10-08 更新：新增第 17 项「盘内字面量目录巡检」（`scanLiteralDirs`）——
       > 检出形如 `%VAR%` / `${VAR}` 的目录名（环境变量未展开的痕迹）。见 ADR-0033。
 - [x] **修复运行时残缺包**（4 个：`dsh-client-ui-sidebar-documentpreview`、`dsh-experimental-inspector`、

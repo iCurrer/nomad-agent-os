@@ -53,6 +53,7 @@ const { redactEnv, localDate } = require('./lib/logger.js')
 const { ensureDirs, buildArgv } = require('./lib/bootstrap.js')
 const { ensureNomadProfile, inspectNomadProfile, listProfiles, createProfile, validateProfileDir, validateProfileName } = require('./lib/profile.js')
 const { listSkills, addSkill, removeSkill, skillsDir } = require('./lib/skills.js')
+const { loadPermissions, selfCheckNever, describePermissions } = require('./lib/permissions.js')
 const { readState, clearState, isAlive, isFresh, stateFile } = require('./lib/state.js')
 const { sanitizeUrl } = require('./lib/dsh-url.js')
 const { probeHttp } = require('./lib/probe.js')
@@ -249,6 +250,20 @@ function printPlan(ctx, options) {
   console.log('宿主隔离：')
   for (const line of describePlan(built.report, config.isolation.override, root)) console.log(`  ${line}`)
   console.log('')
+  // 权限档位（3.4）：只读展示模板 + never 自证；禁止自造桥接到上游权限体系（3.0-C）。
+  try {
+    const perm = loadPermissions({ root })
+    const checks = selfCheckNever(perm, { config, envReport: built.report, runtime })
+    console.log('权限档位（config/permissions.yaml，契约展示；上游生效的是 DSH 原生权限体系）：')
+    for (const line of describePermissions(perm, checks)) console.log(`  ${line}`)
+    if (perm.problems.length > 0) {
+      console.log(`  ⚠ 模板问题: ${perm.problems.join('；')}`)
+    }
+    console.log('')
+  } catch (error) {
+    console.log(`权限档位    ✗ ${error instanceof Error ? error.message : String(error)}`)
+    console.log('')
+  }
   console.log(`浏览器        ${options.openBrowser ? '启动就绪后由 Nomad 打开（DSH 恒定 --no-open）' : '不打开'}`)
   console.log(`状态文件      ${stateFile(root)}`)
   if (config.warnings.length > 0) {
