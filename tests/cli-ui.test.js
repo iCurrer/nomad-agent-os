@@ -101,12 +101,12 @@ test('banner：NOMAD 五行块字 + 右侧信息列，行宽恒定、信息注�
     assert.equal(lines.length, 5, '块字艺术固定 5 行')
     for (const line of lines) {
       assert.equal(ui.displayWidth(line.split('  ')[0]) - 0 >= 0, true)
-      assert.equal(line.slice(0, 46).length, 46, '艺术区每行 46 列（含尾部空格补齐）')
+      assert.equal(line.slice(0, 35).length, 35, '艺术区每行 35 列（含尾部空格补齐）')
     }
     assert.ok(lines[0].includes('Portable Agent OS'))
     assert.ok(lines[1].includes('Nomad 0.0.1-dev'))
     assert.ok(lines[3].includes('DSH 0.2.1-alpha.1'))
-    assert.ok(art.includes('██'), '应含块字字符')
+    assert.ok(art.includes('█'), '应含块字字符'); assert.ok(!art.includes('╗') && !art.includes('╔'), '不得含制表符字形（宋体系字体双宽会散架）')
     // 信息不足 5 行时右侧留空，不抛错
     assert.equal(ui.banner(['a']).split('\n').length, 5)
   } finally {
@@ -121,7 +121,7 @@ test('banner：tagline 追加在横幅下方；颜色开启时艺术区带 ANSI'
     const lines = art.split('\n')
     assert.equal(lines.length, 7, '5 行艺术 + 空行 + tagline')
     assert.equal(lines[6], 'ready')
-    assert.match(lines[0], /\x1b\[1;36m██╗/)
+    assert.match(lines[0], /\x1b\[1;36m█/)
   } finally {
     ui.setColorMode(undefined)
   }
