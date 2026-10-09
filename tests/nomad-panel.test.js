@@ -380,3 +380,35 @@ test('★ 状态端点锚定：client.js 的固定端口必须与 config/nomad.y
     'client.js 的端点端口必须与 config 的 status.port 相同（改端口时两处一起改）',
   )
 })
+
+// ── 仪表盘改版（维护者 2026-10-09 反馈：介绍与面板分离，数据卡片墙）──────────────
+// 契约：① Dashboard 卡片在首屏元素树里；② About 默认折叠（display:none）但**仍在树中**
+// （合规文案不缺席）；③ About 开关是 div 不是 button（回程按钮保持全树唯一）。
+
+test('仪表盘改版：数据卡片墙在首屏，About 折叠隐藏但文案仍在元素树里', () => {
+  const { comps, options } = applyAndCapture()
+  const tree = comps['main'](options['main'].inject())
+  const text = textOf(tree)
+
+  // ① Dashboard 卡片标签应出现在首屏（端点未就绪时至少有 Status 骨架卡）
+  assert.ok(text.includes('Dashboard'), '应有 Dashboard 分区标题')
+  assert.ok(text.includes('Version') || text.includes('Status'), '应有状态卡片（真实数据卡或骨架卡）')
+
+  // ② About 区块默认 display:none（视觉折叠），但文案仍在树中（合规不缺席）
+  let aboutNode = null
+  walk(tree, (node) => {
+    if (node.type === 'section' && node.props && node.props.style
+      && node.props.style.display === 'none') aboutNode = node
+  })
+  assert.ok(aboutNode !== null, 'About 区块应默认折叠（style.display === "none"）')
+  const aboutText = textOf(aboutNode)
+  assert.ok(aboutText.includes('注册商标') && aboutText.includes('无背书'), '折叠态下合规文案仍必须在元素树里')
+
+  // ③ About 开关是 div（回程 <button> 的全树唯一性由既有断言守住）
+  let toggleFound = false
+  walk(tree, (node) => {
+    if (node.type === 'div' && typeof node.props?.children === 'string'
+      && String(node.props.children).includes('About Nomad')) toggleFound = true
+  })
+  assert.ok(toggleFound, '应有「About Nomad」折叠开关（div 形态）')
+})

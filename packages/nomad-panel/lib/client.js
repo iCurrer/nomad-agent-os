@@ -1,10 +1,10 @@
 // nomad-panel — 浏览器半（**手写，零构建**）
 //
 // 职责：在 DSH 侧栏**长出一个 Nomad 自己的入口**，并在主区渲染 Nomad 自己的面板。
-// 这是 Phase 2 阶段 5-B（结构层）的第一步 —— 骨架版：
-//   分区 = ① 品牌头 ② **About（产品介绍 + 合规声明）** ③ 状态区 ④ 计划分区 ⑤ 回程。
-//   其中 **About 是第一个"真实内容"**（其余仍为骨架/占位）：它同时承担合规职能 ——
-//   承载上游归属、许可与商标关系声明（理由见该区块内的注释，以及 docs/DECISIONS.md）。
+// 这是 Phase 2 阶段 5-B（结构层）的产物；2026-10-09 依维护者反馈改版为**仪表盘形态**：
+//   分区 = ① 品牌头 ② **Dashboard（状态数据卡片墙）** ③ 构建元信息 ④ About（折叠，默认收起）。
+//   About（合规声明 + 产品介绍）与数据面板**分离** —— 数据归数据，合规归合规；
+//   About 折叠但**始终在元素树里**（inline display:none），合规文案由测试守着，不因折叠而缺席。
 //
 // ── 为什么是「增量长一格」而不是「整块替换侧栏」────────────────────────────────
 // `ui-layout/src/client/index.ts:58-67` 对 `sidebar` 槽的契约原文：
@@ -218,7 +218,101 @@ window.__ModuleLoader__.load({
 			});
 		}
 
-		// ── 面板本体（骨架）────────────────────────────────────────────────────────
+		// ── 仪表盘卡片数据（3.6 面板整合 + 维护者 2026-10-09「仪表盘化」反馈）────────
+		/**
+		 * 把状态快照折叠成仪表盘卡片数据（纯函数，测试可直接喂桩数据）。
+		 * 每张卡 = { label, value, sub }；端点未就绪时给一张「Status」卡说明原因；
+		 * 各数据段缺失时跳过对应卡 —— 段级容错契约：缺一段不塌整墙。
+		 * @param {{ data: object|null, error: string|null, stale: boolean }} status - useStatus 快照
+		 * @returns {{ label: string, value: string, sub: string }[]} 卡片数据
+		 */
+		function buildCards(status) {
+			const data = status && status.data;
+			if (data === null || data === undefined) {
+				return [{
+					label: "Status",
+					value: "—",
+					sub: status && status.error ? "端点不可达：" + status.error : "连接中…",
+				}];
+			}
+			const id = data.identity || {};
+			const st = data.state || {};
+			const health = data.health || {};
+			const cards = [];
+			cards.push({
+				label: "Version",
+				value: id.NOMAD_VERSION || "—",
+				sub: "DSH " + (id.DSH_VERSION || "—"),
+			});
+			cards.push({
+				label: "Instance",
+				value: st.phase !== undefined ? String(st.phase) : "未运行",
+				sub: st.publicUrl !== undefined && st.publicUrl !== "" ? String(st.publicUrl) : "nomad start 后出现",
+			});
+			const summary = health.summary || {};
+			cards.push({
+				label: "Health",
+				value: `${summary.pass ?? 0} 通过`,
+				sub: `警告 ${summary.warn ?? 0} · 失败 ${summary.fail ?? 0} · 跳过 ${summary.skip ?? 0}`,
+			});
+			// Profiles 段（Phase 3.6）：默认 profile 置前；问题明细由 doctor 承担。
+			if (data.profiles !== undefined && data.profiles !== null) {
+				cards.push({
+					label: "Profile",
+					value: data.profiles.defaultName || "—",
+					sub: `盘内共 ${data.profiles.count ?? 0} 个`,
+				});
+			}
+			// Skills 段（Phase 3.2）：数量一目了然；修复指引由 doctor 的 skills 巡检项承担。
+			if (data.skills !== undefined && data.skills !== null) {
+				cards.push({
+					label: "Skills",
+					value: `有效 ${data.skills.valid ?? 0}`,
+					sub: `已装 ${data.skills.total ?? 0} · 被忽略 ${data.skills.ignored ?? 0}`,
+				});
+			}
+			// 数据面段（Phase 3.3）+ 备份提示（3.5）：面板只展示，动作入口在 CLI。
+			if (data.data !== undefined && data.data !== null) {
+				cards.push({
+					label: "Storage",
+					value: data.data.human ?? "—",
+					sub: `可清理 ${data.data.tmpFiles ?? 0} 文件`,
+				});
+				const backup = data.data.lastBackup;
+				if (backup !== undefined && backup !== null) {
+					cards.push({
+						label: "Backup",
+						value: backup.ageDays === null || backup.ageDays === undefined ? "从未备份" : `${backup.ageDays} 天前`,
+						sub: backup.ageDays != null && backup.ageDays > 30 ? "建议 nomad backup" : "nomad backup 可备份",
+					});
+				}
+			}
+			// 权限档位段（Phase 3.6）：一行档位摘要；正文与 never 自证由 doctor 第 21 项承担。
+			if (data.permissions !== undefined && data.permissions !== null) {
+				const pm = data.permissions;
+				cards.push({
+					label: "Permissions",
+					value: pm.exists ? (pm.summary !== "" ? pm.summary : "模板异常") : "模板缺失",
+					sub: `never ${pm.never ?? 0} 条${pm.problems > 0 ? ` · ${pm.problems} 个问题（见 doctor）` : ""}`,
+				});
+			}
+			// 更新提示段（Phase 3.6）：只回读 CLI 显式检查的落盘留档，端点零网络。
+			{
+				const upd = data.update;
+				let value = "从未检查";
+				let sub = "nomad update --check";
+				if (upd !== undefined && upd !== null) {
+					if (upd.comparison === "up-to-date") { value = "已是最新"; sub = String(upd.current ?? "—"); }
+					else if (upd.comparison === "current-newer") { value = "盘内更新"; sub = `${upd.current ?? "—"} > ${upd.latest ?? "—"}，不动作`; }
+					else if (upd.comparison === "update-available") { value = "可更新"; sub = `${upd.current ?? "—"} → ${upd.latest ?? "—"}（nomad update --yes）`; }
+					else { value = "查询失败"; sub = "重试 nomad update --check"; }
+				}
+				cards.push({ label: "Update", value: value, sub: sub });
+			}
+			return cards;
+		}
+
+		// ── 面板本体（仪表盘版）────────────────────────────────────────────────────
 		/**
 		 * 尽力读取构建标识；拿不到就返回 undefined（骨架不因缺信息而崩）。
 		 * 上游 SidebarRoot 用 `process.env.DSH_CLIENT_VERSION`（构建期替换）；
@@ -239,15 +333,11 @@ window.__ModuleLoader__.load({
 			return undefined;
 		}
 
-		/** 骨架里预告的分区 —— 只声明意图，不实现，避免"空得没信息"。 */
-		const PLANNED = [
-			["Memory", "跨会话的长期记忆与项目上下文"],
-			["Skills", "可复用的工作流与领域技能"],
-			["Projects", "磁盘上的工作区与产物管理"],
-		];
-
 		/**
-		 * 渲染 Nomad 面板（骨架）。
+		 * 渲染 Nomad 面板（仪表盘版）。
+		 * 分区顺序：品牌头 → Dashboard 卡片墙 → 构建元信息 → About 开关（折叠）→ About 正文 → 回程。
+		 * About 默认收起（inline display:none）但**始终在元素树里** —— 合规文案不缺席，
+		 * 由 tests/nomad-panel.test.js 的 About 系列断言守住。
 		 * @param props - 注册时 `inject` 提供的回调。
 		 * @param props.back - 返回对话（`selectPanel(null)`；上游 AppFrame 把 null 视为对话）。
 		 * @returns 面板元素树。
@@ -256,8 +346,11 @@ window.__ModuleLoader__.load({
 			const back = props && props.back;
 			const buildId = readBuildId();
 			const status = useStatus();
+			const aboutState = React.useState(false);
+			const showAbout = aboutState[0];
+			const toggleAbout = aboutState[1];
 
-			/** 一行「标签 — 值」的状态显示。 */
+			/** 一行「标签 — 值」的元信息显示（About 归属行与构建元信息行共用）。 */
 			const row = (label, value) => jsx_runtime.jsxs("div", {
 				style: { display: "contents" },
 				children: [
@@ -279,107 +372,8 @@ window.__ModuleLoader__.load({
 				],
 			}, label);
 
-			/**
-			 * 把状态快照渲染成「标签—值」行列表。
-			 * 有真实数据时显示身份/运行态/健康度三类；端点未就绪（error）或数据缺失时
-			 * 降级为骨架行，绝不因端点缺席而崩（这是只读端点的容错契约）。
-			 * @param {{ data: object|null, error: string|null }} status - useStatus 快照
-			 * @param {string|undefined} buildId - 构建标识
-			 * @returns 行元素数组
-			 */
-			const buildStatusRows = (status, buildId) => {
-				const data = status && status.data;
-				if (data === null || data === undefined) {
-					// 降级骨架：保留 Build/Panel 两个静态行，并如实标注端点未就绪。
-					return [
-						row("Build", buildId === undefined ? "—" : buildId),
-						row("Panel", PANEL_ID),
-						row("Status", status && status.error ? `Status endpoint unreachable（${status.error}）` : "Status endpoint unreachable — connecting…"),
-					];
-				}
-				const id = data.identity || {};
-				const st = data.state || {};
-				const health = data.health || {};
-				const staleNote = status && status.stale
-					? `（数据陈旧：${status.error}）` : "";
-				const summary = health.summary || {};
-				const rows = [
-					row("Nomad", id.NOMAD_VERSION || "—"),
-					row("DSH", id.DSH_VERSION || "—"),
-					row("Node", id.NODE_VERSION || "—"),
-					row("Stage", id.STAGE || "—"),
-				];
-				if (st.phase !== undefined) {
-					rows.push(row("Phase", String(st.phase)));
-					if (st.publicUrl !== undefined && st.publicUrl !== "") rows.push(row("URL", String(st.publicUrl)));
-					if (st.heartbeatAt !== undefined) rows.push(row("Heartbeat", String(st.heartbeatAt)));
-				} else {
-					rows.push(row("Instance", "无运行中的实例"));
-				}
-				rows.push(row(
-					"Health",
-					`通过 ${summary.pass ?? 0} · 警告 ${summary.warn ?? 0} · 失败 ${summary.fail ?? 0} · 跳过 ${summary.skip ?? 0}`,
-				));
-				// Skills 数据段（Phase 3.2 状态端点扩展）：只显示数量与有效项名称；
-				// 无效/被忽略项的修复指引由 doctor 的 skills 巡检项承担（health.results 可见）。
-				if (data.skills !== undefined && data.skills !== null) {
-					const sk = data.skills;
-					let skillsText = `有效 ${sk.valid ?? 0} / 已装 ${sk.total ?? 0}`;
-					if (Array.isArray(sk.items) && sk.items.length > 0) {
-						skillsText += "：" + sk.items.map(function (s) { return s.name; }).join(", ");
-					}
-					rows.push(row("Skills", skillsText));
-				}
-				// 数据面段（Phase 3.3）：可清理白名单（data/tmp + dsh-home/tmp）占用；
-				// 清理入口在 CLI（nomad storage clean），面板只展示不触发。
-				if (data.data !== undefined && data.data !== null) {
-					rows.push(row("Data", `可清理 ${data.data.human ?? "—"} / ${data.data.tmpFiles ?? 0} 文件`));
-					// 备份提示（3.5 数据面）：从未备份如实说；超 30 天给行动提示。
-					const backup = data.data.lastBackup;
-					if (backup !== undefined && backup !== null) {
-						rows.push(row("Backup", backup.ageDays === null || backup.ageDays === undefined
-							? "从未备份（nomad backup）"
-							: (backup.ageDays > 30
-								? `${backup.ageDays} 天前 —— 建议备份（nomad backup）`
-								: `${backup.ageDays} 天前`)));
-					}
-				}
-				// Profiles 段（Phase 3.6）：默认 profile 置前，其余只报名与数；
-				// 问题明细由 doctor 的 profile 巡检项承担（health.results 可见）。
-				if (data.profiles !== undefined && data.profiles !== null && Array.isArray(data.profiles.items)) {
-					const pf = data.profiles;
-					let profileText = `${pf.defaultName ?? "—"}（默认）`;
-					const others = pf.items.filter(function (p) { return p.name !== pf.defaultName; });
-					if (others.length > 0) profileText += " · 另有 " + others.map(function (p) { return p.name; }).join(", ");
-					const bad = pf.items.filter(function (p) { return p.problems > 0 || (p.exists && !p.manifestValid); });
-					if (bad.length > 0) profileText += `（${bad.length} 个异常，见 doctor）`;
-					rows.push(row("Profile", profileText));
-				}
-				// 权限档位段（Phase 3.6）：一行档位摘要 + never 条数；
-				// 档位正文与 never 自证明细由 doctor 第 21 项承担。
-				if (data.permissions !== undefined && data.permissions !== null) {
-					const pm = data.permissions;
-					let permText = pm.exists ? (pm.summary !== "" ? pm.summary : "模板异常") : "模板缺失";
-					permText += ` · never ${pm.never ?? 0} 条`;
-					if (pm.problems > 0) permText += `（${pm.problems} 个问题，见 doctor）`;
-					rows.push(row("Permissions", permText));
-				}
-				// 更新提示段（Phase 3.6）：只回读 CLI 显式检查的落盘留档，
-				// 端点零网络；从未检查则给一条可执行的指引。
-				if (data.update === undefined || data.update === null) {
-					rows.push(row("Update", "从未检查（nomad update --check）"));
-				} else {
-					const upd = data.update;
-					let updText;
-					if (upd.comparison === "up-to-date") updText = `已是最新（${upd.current ?? "—"}）`;
-					else if (upd.comparison === "current-newer") updText = `盘内更新（${upd.current ?? "—"} > ${upd.latest ?? "—"}），不动作`;
-					else if (upd.comparison === "update-available") updText = `可更新 ${upd.current ?? "—"} → ${upd.latest ?? "—"}（nomad update --yes）`;
-					else updText = "上次查询失败（重试：nomad update --check）";
-					rows.push(row("Update", updText));
-				}
-				rows.push(row("Build", (buildId === undefined ? "—" : buildId) + staleNote));
-				return rows;
-			};
+			const cards = buildCards(status);
+			const staleNote = status && status.stale ? `（数据陈旧：${status.error}）` : "";
 
 			return jsx_runtime.jsx("div", {
 				style: { height: "100%", overflowY: "auto", display: "flex", justifyContent: "center" },
@@ -387,11 +381,11 @@ window.__ModuleLoader__.load({
 					style: {
 						width: "100%",
 						maxWidth: "720px",
-						padding: "64px 32px 72px",
+						padding: "48px 32px 72px",
 						boxSizing: "border-box",
 						display: "flex",
 						flexDirection: "column",
-						gap: "30px",
+						gap: "26px",
 						color: T.primary,
 					},
 					children: [
@@ -416,21 +410,9 @@ window.__ModuleLoader__.load({
 								}, "tagline"),
 							],
 						}),
-						// ② About —— 产品介绍 + 合规声明（归属 / 许可 / 商标 / 免责）
-						// 为什么它必须存在（而非"锦上添花"）：
-						//   · `BRAND_GUIDELINES.zh.md` 要求"真实、准确地说明与上游的关系"，
-						//     并明示此类描述性说明**符合许可证的要求**；
-						//   · MIT 要求「保留版权声明与本许可声明」。
-						//   界面里得有一处承载它们 —— 本区块就是那个落点（见 DECISIONS.md 的合规 ADR）。
-						//
-						// 措辞红线（改文案前必读）：
-						//   · 说「构建在 X 之上」= 官方许可的描述性用法 ✅
-						//   · 说「官方合作 / 推荐 / 认证」= 违反 BRAND_GUIDELINES ❌（不得暗示背书）
-						//   · 依赖许可不指向 `THIRD_PARTY_NOTICES.md`：该聚合清单**当前不在运行时分发包里**，
-						//     指向它会让用户去翻一个不存在的文件。上游各依赖包**自带** LICENSE，
-						//     故如实写"见各依赖包内 LICENSE"（实测：非 scoped 顶层 164 个包中 155 个自带）。
+						// ② Dashboard —— 状态数据卡片墙（与 About 分离；每 5s 低频刷新）
 						jsx_runtime.jsxs("section", {
-							style: { display: "flex", flexDirection: "column", gap: "12px" },
+							style: { display: "flex", flexDirection: "column", gap: "10px" },
 							children: [
 								jsx_runtime.jsx("div", {
 									style: {
@@ -439,8 +421,102 @@ window.__ModuleLoader__.load({
 										letterSpacing: "0.06em",
 										textTransform: "uppercase",
 									},
-									children: "About",
+									children: "Dashboard",
 								}, "t"),
+								jsx_runtime.jsx("div", {
+									style: {
+										display: "grid",
+										gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+										gap: "10px",
+									},
+									children: cards.map((card) => jsx_runtime.jsxs("div", {
+										style: {
+											background: T.card,
+											border: `1px solid ${T.borderSoft}`,
+											borderRadius: T.radiusMd,
+											padding: "14px 16px",
+											display: "flex",
+											flexDirection: "column",
+											gap: "6px",
+											minWidth: 0,
+										},
+										children: [
+											jsx_runtime.jsx("div", {
+												style: {
+													color: T.secondary,
+													fontSize: "10px",
+													letterSpacing: "0.08em",
+													textTransform: "uppercase",
+												},
+												children: card.label,
+											}, "l"),
+											jsx_runtime.jsx("div", {
+												style: {
+													color: T.primary,
+													fontSize: "15px",
+													fontFamily: T.mono,
+													lineHeight: "20px",
+													wordBreak: "break-word",
+												},
+												children: card.value,
+											}, "v"),
+											jsx_runtime.jsx("div", {
+												style: { color: T.secondary, fontSize: "11px", lineHeight: "16px", wordBreak: "break-word" },
+												children: card.sub,
+											}, "s"),
+										],
+									}, card.label)),
+								}, "cards"),
+							],
+						}, "dashboard"),
+						// ③ 构建元信息（小行，仪表盘的脚注）
+						jsx_runtime.jsxs("div", {
+							style: {
+								background: T.surface,
+								border: `1px solid ${T.borderSoft}`,
+								borderRadius: T.radiusMd,
+								padding: "12px 16px",
+								display: "grid",
+								gridTemplateColumns: "auto 1fr",
+								rowGap: "7px",
+								columnGap: "22px",
+							},
+							children: [
+								row("Build", (buildId === undefined ? "—" : buildId) + staleNote),
+								row("Panel", PANEL_ID),
+							],
+						}, "meta"),
+						// ④ About 开关 —— 折叠切换。刻意用 div 而非 button：
+						//    回程按钮必须保持全树唯一 <button>（tests/nomad-panel.test.js 断言），
+						//    且开关属导航性点击，不承担表单语义。
+						jsx_runtime.jsx("div", {
+							onClick: () => { toggleAbout(function (prev) { return !prev; }); },
+							style: {
+								color: T.secondary,
+								fontSize: "11px",
+								letterSpacing: "0.06em",
+								textTransform: "uppercase",
+								cursor: "pointer",
+								userSelect: "none",
+								alignSelf: "flex-start",
+							},
+							children: (showAbout ? "▾ " : "▸ ") + "About Nomad · 许可与归属",
+						}, "about-toggle"),
+						// ⑤ About 正文 —— 合规声明 + 产品介绍，默认收起（display:none）。
+						//    收起只是视觉折叠：元素树里始终在，合规文案由测试守住不缺席。
+						// 措辞红线（改文案前必读，均为测试锚点）：
+						//   · 说「构建在 X 之上」= 官方许可的描述性用法 ✅
+						//   · 说「官方合作 / 推荐 / 认证」= 违反 BRAND_GUIDELINES ❌（不得暗示背书）
+						//   · 依赖许可不指向 `THIRD_PARTY_NOTICES.md`：该聚合清单**当前不在运行时分发包里**，
+						//     指向它会让用户去翻一个不存在的文件。上游各依赖包**自带** LICENSE，
+						//     故如实写"见各依赖包内 LICENSE"（实测：非 scoped 顶层 164 个包中 155 个自带）。
+						jsx_runtime.jsxs("section", {
+							style: {
+								display: showAbout ? "flex" : "none",
+								flexDirection: "column",
+								gap: "12px",
+							},
+							children: [
 								jsx_runtime.jsx("p", {
 									style: { margin: 0, fontSize: "14px", lineHeight: "22px", color: T.primary },
 									children: "把 Agent 的家装进 U 盘，把浏览器变成它的屏幕。",
@@ -477,64 +553,7 @@ window.__ModuleLoader__.load({
 								}, "notice"),
 							],
 						}, "about"),
-						// ③ 状态区 —— 真实数据（低频轮询），失败降级为骨架
-						jsx_runtime.jsxs("section", {
-							style: {
-								background: T.surface,
-								border: `1px solid ${T.borderSoft}`,
-								borderRadius: T.radiusLg,
-								padding: "18px 20px",
-								display: "grid",
-								gridTemplateColumns: "auto 1fr",
-								rowGap: "9px",
-								columnGap: "22px",
-							},
-							children: buildStatusRows(status, buildId),
-						}, "status"),
-						// ④ 计划分区（占位）
-						jsx_runtime.jsxs("section", {
-							style: { display: "flex", flexDirection: "column", gap: "10px" },
-							children: [
-								jsx_runtime.jsx("div", {
-									style: {
-										color: T.secondary,
-										fontSize: "11px",
-										letterSpacing: "0.06em",
-										textTransform: "uppercase",
-									},
-									children: "Planned",
-								}, "t"),
-								jsx_runtime.jsx("div", {
-									style: {
-										display: "grid",
-										gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
-										gap: "10px",
-									},
-									children: PLANNED.map(([title, desc], index) => jsx_runtime.jsxs("div", {
-										style: {
-											background: T.card,
-											border: `1px dashed ${T.border}`,
-											borderRadius: T.radiusMd,
-											padding: "16px 18px",
-											display: "flex",
-											flexDirection: "column",
-											gap: "5px",
-										},
-										children: [
-											jsx_runtime.jsx("div", {
-												style: { fontSize: "13px", fontWeight: 600, color: T.primary },
-												children: title,
-											}, "h"),
-											jsx_runtime.jsx("div", {
-												style: { fontSize: "12px", lineHeight: "18px", color: T.secondary },
-												children: desc,
-											}, "d"),
-										],
-									}, index)),
-								}, "cards"),
-							],
-						}),
-						// ⑤ 回程
+						// ⑥ 回程
 						jsx_runtime.jsxs("footer", {
 							style: {
 								display: "flex",
@@ -549,7 +568,6 @@ window.__ModuleLoader__.load({
 									type: "button",
 									onClick: () => { if (typeof back === "function") back(); },
 									style: {
-										marginTop: "16px",
 										background: "transparent",
 										color: T.primary,
 										border: `1px solid ${T.border}`,
@@ -561,7 +579,7 @@ window.__ModuleLoader__.load({
 									children: "Back to conversation",
 								}, "back"),
 								jsx_runtime.jsx("span", {
-									style: { marginTop: "16px", color: T.secondary, fontSize: "12px" },
+									style: { color: T.secondary, fontSize: "12px" },
 									children: "点击左侧任意会话也会回到对话",
 								}, "hint"),
 							],
