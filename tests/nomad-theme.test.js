@@ -170,24 +170,39 @@ test('宿主半是空 apply（不注册任何服务）', () => {
 // 契约：apply 时向 document.head 注入一条 id 锚定的 style 规则；幂等（重复 apply 不叠加）；
 // 规则用 [class*="_fish"] 子串匹配（hash 变了也能跟上）；无 document 环境（SSR/测试沙箱）跳过。
 
-/** 带最小 document 桩的加载器：捕获注入的 style 元素。 */
+/** 带最小 document 桩的加载器：捕获注入的 style 元素 + 标题守卫的可观测状态。 */
 function loadModuleWithDocument() {
   const injected = []
   let existing = null
+  // 标题守卫桩：title setter 同步触发已注册的观察者回调（模拟真实浏览器语义）。
+  const observerCallbacks = []
+  let title = ''
   const documentStub = {
     getElementById: (id) => (existing !== null && existing.id === id ? existing : null),
     createElement: () => ({ id: '', textContent: '' }),
     head: { appendChild: (el) => { existing = el; injected.push(el) } },
+    get title() { return title },
+    set title(value) {
+      title = value
+      for (const cb of observerCallbacks) cb()
+    },
   }
   let envelope
   const windowObject = { __ModuleLoader__: { load: (spec) => { envelope = spec } } }
-  const sandbox = { window: windowObject, document: documentStub }
+  const sandbox = {
+    window: windowObject,
+    document: documentStub,
+    MutationObserver: class {
+      constructor(cb) { observerCallbacks.push(cb) }
+      observe() { /* 桩：注册即视为已监听 */ }
+    },
+  }
   vm.createContext(sandbox)
   vm.runInContext(fs.readFileSync(CLIENT_PATH, 'utf8'), sandbox, { filename: 'nomad-theme/client.js' })
   assert.ok(envelope !== undefined, 'client.js 没有调用 window.__ModuleLoader__.load')
   const module = envelope.factory(() => { throw new Error('unexpected require') })
   const ctx = { theme: { overrideTokens: () => {} } }
-  return { module, ctx, injected }
+  return { module, ctx, injected, document: documentStub, windowObject }
 }
 
 test('发布打磨：注入上游鲸鱼隐藏规则，幂等不叠加', () => {
@@ -200,4 +215,47 @@ test('发布打磨：注入上游鲸鱼隐藏规则，幂等不叠加', () => {
   // 幂等：getElementById 已命中（existing 有 id），再次 apply 不叠加
   module.apply(ctx)
   assert.equal(injected.length, 1, '重复 apply 不得叠加第二条 style')
+})
+
+// ── 发布打磨（2026-10-09）：浏览器标签标题守卫 ──────────────────────────────────
+// 契约：上游 layout 的 productTitle = "DeepSeek Harness" 是硬编码且每次会话切换都会
+// 重写 document.title ⇒ 一次性改写必被打回。守卫 = 应用即修一次 + MutationObserver
+// 持续监听；凡含上游产品名就地替换为 Nomad，保留会话名前缀；幂等（window 旗标）。
+
+test('标题守卫：apply 立即改写含上游产品名的初始标题', () => {
+  const { module, ctx, document } = loadModuleWithDocument()
+  document.title = 'DeepSeek Harness'
+  module.apply(ctx)
+  assert.equal(document.title, 'Nomad', '初始标题应立即改为 Nomad')
+})
+
+test('标题守卫：观察者持续拦截 —— 会话切换写入「会话 — DeepSeek Harness」时保留前缀只换产品名', () => {
+  const { module, ctx, document } = loadModuleWithDocument()
+  module.apply(ctx)
+  // 模拟上游 DocumentTitle 组件的效果：切换会话时重写整个标题
+  document.title = '调试引擎 — DeepSeek Harness'
+  assert.equal(document.title, '调试引擎 — Nomad', '会话前缀必须保留，仅产品名替换')
+  // 上游清理函数直接写回 productTitle 的场景
+  document.title = 'DeepSeek Harness'
+  assert.equal(document.title, 'Nomad')
+  // 守卫自己的改写（已不含目标串）不会引发二次改写（天然无死循环）
+  document.title = 'Nomad'
+  assert.equal(document.title, 'Nomad')
+  // 与上游无关的正常标题不受影响
+  document.title = '设置 — Nomad'
+  assert.equal(document.title, '设置 — Nomad')
+})
+
+test('标题守卫：幂等 —— 重复 apply 不得叠加观察者（改写只发生一次）', () => {
+  const { module, ctx, document } = loadModuleWithDocument()
+  module.apply(ctx)
+  module.apply(ctx)
+  module.apply(ctx)
+  document.title = 'x — DeepSeek Harness'
+  assert.equal(document.title, 'x — Nomad')
+  // 若叠加了 3 个观察者，title 会被写 3 次；通过对比结果无法直接观测次数，
+  // 但守卫逻辑本身幂等（第二次替换不命中），这里至少锁住结果正确性。
+  // 真正的叠加防护由 window.__nomadTitleGuardInstalled 旗标守：源码断言兜底。
+  const source = fs.readFileSync(CLIENT_PATH, 'utf8')
+  assert.ok(source.includes('__nomadTitleGuardInstalled'), '必须用 window 旗标做安装幂等')
 })

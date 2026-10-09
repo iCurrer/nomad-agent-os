@@ -161,8 +161,48 @@ window.__ModuleLoader__.load({
 		 */
 		const HIDE_UPSTREAM_FISH_CSS = '[class*="_fish"],[class*="_fishHitbox"]{display:none!important}';
 
+		// ── 浏览器标签标题守卫（2026-10-09 发布打磨）────────────────────────────────
+		// 上游 `dsh-client-ui-layout` 的 AppFrame 里 `const productTitle = "DeepSeek Harness"`
+		// 是**硬编码常量**（不走 i18n，locale 通道够不着），其 DocumentTitle 组件在每次
+		// 会话切换/卸载时都会主动重写 document.title（`title — DeepSeek Harness` / 清理函数
+		// 直接写回 productTitle）⇒ 一次性改写必被打回。唯一不碰 Core 的正规做法：装一个
+		// **持续守卫** —— MutationObserver 监听标题变化，凡含上游产品名就地替换为 Nomad，
+		// 保留会话名前缀（`会话X — DeepSeek Harness` → `会话X — Nomad`）。
+		// 防死循环：守卫自己的改写结果不再含目标串，观察者回调二次触发即空转。
+		const UPSTREAM_PRODUCT_TITLE = "DeepSeek Harness";
+		const NOMAD_PRODUCT_TITLE = "Nomad";
+
+		/** 就地改写：把上游产品名整体替换为 Nomad（其余内容原样保留）。 */
+		function rewriteDocumentTitle(raw) {
+			return raw.split(UPSTREAM_PRODUCT_TITLE).join(NOMAD_PRODUCT_TITLE);
+		}
+
 		/**
-		 * 挂载：堆叠一层 Nomad 换肤覆盖 + 注入上游吉祥物隐藏规则。
+		 * 安装标题守卫（幂等：window 旗标，重复 apply 不叠加观察者）。
+		 * 监听 document.head 的子树/文本变化 —— React 对 document.title 的写入
+		 * 最终都落在 <title> 元素的文本上，head 级监听对「title 元素被整体替换」也免疫。
+		 */
+		function installTitleGuard() {
+			if (typeof document === "undefined" || typeof MutationObserver === "undefined") return;
+			if (typeof window !== "undefined") {
+				if (window.__nomadTitleGuardInstalled === true) return;
+				window.__nomadTitleGuardInstalled = true;
+			}
+			const fix = () => {
+				if (typeof document.title === "string" && document.title.indexOf(UPSTREAM_PRODUCT_TITLE) !== -1) {
+					document.title = rewriteDocumentTitle(document.title);
+				}
+			};
+			// 应用即修一次：React 挂载前的初始标题（若上游将来加了静态 <title>）也覆盖。
+			fix();
+			const observer = new MutationObserver(fix);
+			if (document.head) {
+				observer.observe(document.head, { childList: true, subtree: true, characterData: true });
+			}
+		}
+
+		/**
+		 * 挂载：堆叠一层 Nomad 换肤覆盖 + 注入上游吉祥物隐藏规则 + 标题守卫。
 		 * @param ctx - 客户端根上下文（`ctx.theme` 由 `inject` 声明保证可用）。
 		 */
 		function apply(ctx) {
@@ -175,6 +215,8 @@ window.__ModuleLoader__.load({
 				style.textContent = HIDE_UPSTREAM_FISH_CSS;
 				document.head.appendChild(style);
 			}
+			// 标签标题守卫（幂等：window 旗标）。
+			installTitleGuard();
 		}
 
 		exports.apply = apply;
