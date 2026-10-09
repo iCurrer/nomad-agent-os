@@ -670,6 +670,15 @@ async function cmdUpdate(flags) {
     return 1
   }
 
+  // 检查成功即落盘（3.6 面板整合）：--check 与完整升级路径都会留档到
+  // data/run/update-check.json，状态端点据此向面板展示「上次检查」结果。
+  // 落盘失败不阻断主流程（展示数据缺失可接受，检查结论照常输出）。
+  try {
+    updater.saveUpdateCheck(ctx.root, check)
+  } catch (error) {
+    console.error(`提示：检查结果落盘失败（不影响本次检查）：${error instanceof Error ? error.message : String(error)}`)
+  }
+
   console.log(`盘内当前      ${current}`)
   console.log(`registry 最新 ${check.latest}`)
   const available = listDshVersions(ctx.root, ctx.config)

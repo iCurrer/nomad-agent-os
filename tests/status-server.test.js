@@ -10,7 +10,7 @@
 
 const test = require('node:test')
 const assert = require('node:assert')
-const { startStatusServer, collectStatus, sanitizeState, readVersionFile, STATE_WHITELIST } = require('../launcher/lib/status-server.js')
+const { startStatusServer, collectStatus, sanitizeState, readVersionFile, buildProfilesSummary, buildPermissionsSummary, buildUpdateSummary, STATE_WHITELIST } = require('../launcher/lib/status-server.js')
 const { loadConfig } = require('../launcher/lib/config.js')
 const { discoverRuntime } = require('../launcher/lib/runtime.js')
 const { detectRoot } = require('../launcher/lib/root.js')
@@ -154,4 +154,57 @@ test('端点：使用 config.status.port 固定端口（面板靠可预测地址
   } finally {
     await close()
   }
+})
+
+// ── 3.6 面板整合：profiles / permissions / update 三段 ─────────────────────────
+// 契约：轻量段每次现算（单文件级读取），update 段只回读 CLI 留档（端点零网络）。
+
+test('collectStatus：3.6 整合段齐全且形状正确', async () => {
+  const ctx = makeContext()
+  const status = await collectStatus(ctx)
+  // profiles：数量 + 默认名 + 每项最小字段
+  assert.ok(status.profiles && typeof status.profiles === 'object', '应有 profiles 段')
+  assert.ok(typeof status.profiles.count === 'number' && status.profiles.count >= 0, 'profiles.count 应是数字')
+  assert.ok(typeof status.profiles.defaultName === 'string', 'profiles.defaultName 应是字符串')
+  assert.ok(Array.isArray(status.profiles.items), 'profiles.items 应是数组')
+  for (const item of status.profiles.items) {
+    assert.ok(typeof item.name === 'string' && item.name !== '', 'profile 项应有名称')
+    assert.ok(item.kind === 'default' || item.kind === 'user', `profile 项 kind 只能是 default/user，实际 ${item.kind}`)
+    assert.ok(typeof item.bundles === 'number' && typeof item.problems === 'number', 'profile 项应有 bundles/problems 计数')
+  }
+  // permissions：exists + never 计数 + problems 计数
+  assert.ok(status.permissions && typeof status.permissions === 'object', '应有 permissions 段')
+  assert.ok(typeof status.permissions.exists === 'boolean', 'permissions.exists 应是布尔')
+  assert.ok(typeof status.permissions.never === 'number', 'permissions.never 应是数字')
+  assert.ok(typeof status.permissions.problems === 'number', 'permissions.problems 应是数字')
+  // update：从未检查为 null；有留档则 checkedAt 可解析
+  assert.ok(
+    status.update === null || (typeof status.update.checkedAt === 'string' && !Number.isNaN(Date.parse(status.update.checkedAt))),
+    'update 段要么为 null（从未检查），要么带可解析的 checkedAt',
+  )
+})
+
+test('buildProfilesSummary：默认 profile 必须被标记为 default', () => {
+  const ctx = makeContext()
+  const summary = buildProfilesSummary({ root: ctx.root, config: ctx.config })
+  if (summary.count === 0) return // 空盘也是合法状态
+  const marked = summary.items.find((item) => item.kind === 'default')
+  assert.ok(marked !== undefined, '配置指定的启动 profile 应被标记为 default')
+  assert.equal(marked.name, summary.defaultName, 'default 标记必须落在 defaultName 上')
+})
+
+test('buildPermissionsSummary：真实盘内模板应可加载（存在或如实报告缺失）', () => {
+  const ctx = makeContext()
+  const summary = buildPermissionsSummary(ctx.root)
+  assert.equal(typeof summary.exists, 'boolean')
+  if (summary.exists && summary.problems === 0) {
+    assert.ok(summary.summary !== '', '模板有效时必须给出档位摘要字符串')
+  }
+  assert.ok(summary.never >= 0 && summary.never <= 6, 'never 条数应在 NEVER_IDS 范围内')
+})
+
+test('buildUpdateSummary：无留档返回 null（端点零网络的回读契约）', () => {
+  const ctx = makeContext()
+  const summary = buildUpdateSummary(ctx.root)
+  assert.ok(summary === null || typeof summary === 'object', '返回 null 或留档对象，绝不抛')
 })

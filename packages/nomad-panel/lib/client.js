@@ -334,6 +334,48 @@ window.__ModuleLoader__.load({
 				// 清理入口在 CLI（nomad storage clean），面板只展示不触发。
 				if (data.data !== undefined && data.data !== null) {
 					rows.push(row("Data", `可清理 ${data.data.human ?? "—"} / ${data.data.tmpFiles ?? 0} 文件`));
+					// 备份提示（3.5 数据面）：从未备份如实说；超 30 天给行动提示。
+					const backup = data.data.lastBackup;
+					if (backup !== undefined && backup !== null) {
+						rows.push(row("Backup", backup.ageDays === null || backup.ageDays === undefined
+							? "从未备份（nomad backup）"
+							: (backup.ageDays > 30
+								? `${backup.ageDays} 天前 —— 建议备份（nomad backup）`
+								: `${backup.ageDays} 天前`)));
+					}
+				}
+				// Profiles 段（Phase 3.6）：默认 profile 置前，其余只报名与数；
+				// 问题明细由 doctor 的 profile 巡检项承担（health.results 可见）。
+				if (data.profiles !== undefined && data.profiles !== null && Array.isArray(data.profiles.items)) {
+					const pf = data.profiles;
+					let profileText = `${pf.defaultName ?? "—"}（默认）`;
+					const others = pf.items.filter(function (p) { return p.name !== pf.defaultName; });
+					if (others.length > 0) profileText += " · 另有 " + others.map(function (p) { return p.name; }).join(", ");
+					const bad = pf.items.filter(function (p) { return p.problems > 0 || (p.exists && !p.manifestValid); });
+					if (bad.length > 0) profileText += `（${bad.length} 个异常，见 doctor）`;
+					rows.push(row("Profile", profileText));
+				}
+				// 权限档位段（Phase 3.6）：一行档位摘要 + never 条数；
+				// 档位正文与 never 自证明细由 doctor 第 21 项承担。
+				if (data.permissions !== undefined && data.permissions !== null) {
+					const pm = data.permissions;
+					let permText = pm.exists ? (pm.summary !== "" ? pm.summary : "模板异常") : "模板缺失";
+					permText += ` · never ${pm.never ?? 0} 条`;
+					if (pm.problems > 0) permText += `（${pm.problems} 个问题，见 doctor）`;
+					rows.push(row("Permissions", permText));
+				}
+				// 更新提示段（Phase 3.6）：只回读 CLI 显式检查的落盘留档，
+				// 端点零网络；从未检查则给一条可执行的指引。
+				if (data.update === undefined || data.update === null) {
+					rows.push(row("Update", "从未检查（nomad update --check）"));
+				} else {
+					const upd = data.update;
+					let updText;
+					if (upd.comparison === "up-to-date") updText = `已是最新（${upd.current ?? "—"}）`;
+					else if (upd.comparison === "current-newer") updText = `盘内更新（${upd.current ?? "—"} > ${upd.latest ?? "—"}），不动作`;
+					else if (upd.comparison === "update-available") updText = `可更新 ${upd.current ?? "—"} → ${upd.latest ?? "—"}（nomad update --yes）`;
+					else updText = "上次查询失败（重试：nomad update --check）";
+					rows.push(row("Update", updText));
 				}
 				rows.push(row("Build", (buildId === undefined ? "—" : buildId) + staleNote));
 				return rows;

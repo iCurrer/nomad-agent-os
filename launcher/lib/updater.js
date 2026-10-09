@@ -141,6 +141,61 @@ async function checkUpdate(options) {
 }
 
 /**
+ * `nomad update --check` 结果的落盘位置（`data/run/update-check.json`）。
+ *
+ * 为什么落在 data/run：与 nomad.state.json 同目录 —— 运行期产物、随 .gitignore 排除、
+ * 绝不进开源仓库。端点（status-server）只**读**这个文件，写只发生在 CLI 显式跑
+ * `nomad update` 时 —— 只读端点的「绝不写盘」底线不受影响（ADR-0030）。
+ */
+const UPDATE_CHECK_FILE = 'update-check.json'
+
+/** saveUpdateCheck 允许落盘的字段白名单（其余一律丢弃，防未来字段漂移泄盘）。 */
+const UPDATE_CHECK_FIELDS = Object.freeze([
+  'packageName',
+  'current',
+  'latest',
+  'comparison',
+  'updateAvailable',
+])
+
+/**
+ * 把一次更新检查的结果落盘（供状态端点/面板展示「上次检查」）。
+ * 只写白名单字段 + checkedAt；目录不存在则创建（data/run 本就是运行期目录）。
+ * @param {string} root - NOMAD_ROOT
+ * @param {object} check - checkUpdate 的返回值
+ * @returns {{ file: string, saved: boolean }} 落盘结果（saved=false 表示被跳过）
+ */
+function saveUpdateCheck(root, check) {
+  if (check === null || typeof check !== 'object') return { file: '', saved: false }
+  const dir = path.join(root, 'data', 'run')
+  const file = path.join(dir, UPDATE_CHECK_FILE)
+  const payload = { checkedAt: new Date().toISOString() }
+  for (const key of UPDATE_CHECK_FIELDS) {
+    if (check[key] !== undefined) payload[key] = check[key]
+  }
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(file, `${JSON.stringify(payload, undefined, 2)}\n`, 'utf8')
+  return { file, saved: true }
+}
+
+/**
+ * 回读最近一次更新检查结果（只读；损坏/缺失一律返回 null，绝不抛）。
+ * @param {string} root - NOMAD_ROOT
+ * @returns {object|null} `{ checkedAt, ...fields }` 或 null
+ */
+function readUpdateCheck(root) {
+  const file = path.join(root, 'data', 'run', UPDATE_CHECK_FILE)
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'))
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    if (typeof parsed.checkedAt !== 'string') return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+/**
  * 校验 Buffer 的 sha512 完整性（SSRI 格式：`sha512-<base64>`）。
  * @param {Buffer|Uint8Array} buffer - 数据
  * @param {string} integrity - 期望的 SSRI 字符串
@@ -345,4 +400,7 @@ module.exports = {
   buildNextManifest,
   writePointer,
   applyUpdate,
+  saveUpdateCheck,
+  readUpdateCheck,
+  UPDATE_CHECK_FILE,
 }

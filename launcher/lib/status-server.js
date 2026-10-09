@@ -28,6 +28,9 @@ const { readState } = require('./state.js')
 const { dataSummary } = require('./dataman.js')
 const { lastBackupInfo } = require('./backup.js')
 const { listSkills } = require('./skills.js')
+const { listProfiles } = require('./profile.js')
+const { loadPermissions, summarizeLevels } = require('./permissions.js')
+const { readUpdateCheck } = require('./updater.js')
 
 /** 状态端点返回的 state 字段白名单（其余一律丢弃，尤其带 token 的 `url`）。 */
 const STATE_WHITELIST = [
@@ -130,6 +133,67 @@ function buildDataSummary(config) {
 }
 
 /**
+ * profile 摘要（Phase 3.6 面板整合）：数量 + 默认 profile + 每个的有效性一眼可见。
+ *
+ * 只挑面板展示所需的最小字段：名称 / 种类（default=user 的启动 profile）/ 是否已初始化 /
+ * 清单是否有效 / bundle 数 / 问题数。问题明细由 doctor 的 profile 巡检项承担
+ * （面板 health.results 里现成可见），不在这里重复搬正文。
+ *
+ * @param {{ root: string, config: object }} options - 上下文
+ * @returns {{ base: string, defaultName: string, count: number, items: object[] }} 摘要
+ */
+function buildProfilesSummary(options) {
+  const scan = listProfiles(options)
+  return {
+    base: scan.base,
+    defaultName: scan.defaultName,
+    count: scan.profiles.length,
+    items: scan.profiles.map((profile) => ({
+      name: profile.name,
+      kind: profile.kind,
+      exists: profile.exists,
+      manifestValid: profile.manifestValid,
+      bundles: profile.bundles.length,
+      problems: profile.problems.length,
+    })),
+  }
+}
+
+/**
+ * 权限档位摘要（Phase 3.6 面板整合）：一行档位 + never 条数 + 问题数。
+ *
+ * 只读 config/permissions.yaml（loadPermissions 本身就是纯读取），轻量；
+ * 档位正文与 never 自证明细由 doctor 第 21 项承担，这里只给面板一行结论。
+ *
+ * @param {string} root - NOMAD_ROOT
+ * @returns {{ exists: boolean, summary: string, never: number, problems: number }} 摘要
+ */
+function buildPermissionsSummary(root) {
+  const perm = loadPermissions({ root })
+  return {
+    exists: perm.exists,
+    summary: perm.problems.length === 0 ? summarizeLevels(perm) : '',
+    never: perm.never.length,
+    problems: perm.problems.length,
+  }
+}
+
+/**
+ * 更新检查摘要（Phase 3.6 面板整合）：回读最近一次 `nomad update` 的检查留档。
+ *
+ * 为什么端点**不自己做网络查询**：面板每 5s 轮询本端点，端点里发起 registry 请求
+ * 意味着轮询路径上有网络 I/O —— registry 慢/不可达时把端点拖垮（与 doctor 缓存要解的
+ * 是同一类问题，但网络比磁盘更不可控）。正确姿势：显式检查（`nomad update --check`）
+ * 时由 CLI 落盘留档（saveUpdateCheck），端点只回读文件 —— 5s 轮询路径上零网络。
+ *
+ * @param {string} root - NOMAD_ROOT
+ * @returns {object|null} 最近检查留档；从未检查过为 null
+ */
+function buildUpdateSummary(root) {
+  return readUpdateCheck(root)
+}
+
+/**
  * doctor 结果缓存：健康度不必每次请求全量现算。
  *
  * 为什么（2026-10-09 真机反馈）：面板每 5s 轮询一次 /status，而 doctor 20 项里
@@ -142,9 +206,11 @@ const DOCTOR_CACHE_MS = 30 * 1000
 let doctorCache = null // { at: number, doctor: object }
 
 /**
- * 组装一次完整状态 JSON（身份 + 运行态 + 健康度 + Skills + 数据面，五类合一）。
+ * 组装一次完整状态 JSON（身份 + 运行态 + 健康度 + Skills + 数据面 + 3.6 整合段）。
  *
  * 健康度走 30s 缓存（见 DOCTOR_CACHE_MS 注释）；其余轻量段每次现算。
+ * 3.6 面板整合新增 profiles / permissions / update 三段：均为单文件级读取
+ * （profile 清单、permissions.yaml、update-check.json），5s 轮询路径上无网络 I/O。
  * @param {{ root: string, source: string, config: object, runtime: object }} options - 上下文
  * @returns {Promise<object>} 状态对象
  */
@@ -162,6 +228,9 @@ async function collectStatus(options) {
     state: sanitizeState(readState(root)),
     skills: buildSkillsSummary(config),
     data: buildDataSummary(config),
+    profiles: buildProfilesSummary({ root, config }),
+    permissions: buildPermissionsSummary(root),
+    update: buildUpdateSummary(root),
     health: {
       summary: doctorCache.doctor.summary,
       results: doctorCache.doctor.results,
@@ -238,4 +307,13 @@ async function startStatusServer(options) {
   return { port, close }
 }
 
-module.exports = { startStatusServer, collectStatus, sanitizeState, readVersionFile, STATE_WHITELIST }
+module.exports = {
+  startStatusServer,
+  collectStatus,
+  sanitizeState,
+  readVersionFile,
+  buildProfilesSummary,
+  buildPermissionsSummary,
+  buildUpdateSummary,
+  STATE_WHITELIST,
+}

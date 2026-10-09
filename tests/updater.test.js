@@ -29,6 +29,8 @@ const {
   installDependencies,
   buildNextManifest,
   writePointer,
+  saveUpdateCheck,
+  readUpdateCheck,
 } = require('../launcher/lib/updater.js')
 const { spawn } = require('node:child_process')
 
@@ -245,4 +247,59 @@ test('writePointer：入口存在才写 / 入口缺失拒绝改写', () => {
   const bad = { ...manifest, entry: '../0.9.9/node_modules/@deepseek-ai/dsh/lib/bin.js' }
   assert.throws(() => writePointer({ root, config, manifest: bad, entry: bad.entry, version: '0.9.9' }), /新版本入口不存在/)
   void versionDir
+})
+
+// ── 3.6 面板整合：检查留档（saveUpdateCheck / readUpdateCheck）──────────────────
+// 端点零网络的前提：显式检查时 CLI 落盘、端点只回读。这里守住留档的契约面。
+
+test('saveUpdateCheck：只落盘白名单字段 + checkedAt，回读一致', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'upd-chk-'))
+  try {
+    const check = {
+      packageName: '@deepseek-ai/dsh',
+      current: '0.2.1-alpha.1',
+      latest: '0.2.0-rc.2',
+      comparison: 'current-newer',
+      updateAvailable: false,
+      // 白名单外字段：tarball/integrity/error 绝不能落盘（防字段漂移把大对象/敏感串写进盘）
+      tarball: 'https://registry.example/x.tgz',
+      integrity: 'sha512-AAAA',
+      error: 'should-not-persist',
+    }
+    const saved = saveUpdateCheck(root, check)
+    assert.equal(saved.saved, true)
+    const file = path.join(root, 'data', 'run', 'update-check.json')
+    assert.ok(fs.existsSync(file), '留档应落在 data/run/update-check.json')
+    const back = readUpdateCheck(root)
+    assert.equal(back.comparison, 'current-newer')
+    assert.equal(back.current, '0.2.1-alpha.1')
+    assert.equal(back.latest, '0.2.0-rc.2')
+    assert.equal(back.updateAvailable, false)
+    assert.ok(typeof back.checkedAt === 'string' && !Number.isNaN(Date.parse(back.checkedAt)), 'checkedAt 应是可解析的 ISO 时间')
+    assert.ok(!('tarball' in back), 'tarball 不得落盘')
+    assert.ok(!('integrity' in back), 'integrity 不得落盘')
+    assert.ok(!('error' in back), 'error 不得落盘')
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('readUpdateCheck：从未检查 / 文件损坏 / 顶层非法 一律返回 null（绝不抛）', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'upd-chk-'))
+  try {
+    // ① 从未检查：文件不存在
+    assert.equal(readUpdateCheck(root), null)
+    // ② JSON 损坏
+    fs.mkdirSync(path.join(root, 'data', 'run'), { recursive: true })
+    fs.writeFileSync(path.join(root, 'data', 'run', 'update-check.json'), '{oops')
+    assert.equal(readUpdateCheck(root), null)
+    // ③ 顶层是数组（非法形状）
+    fs.writeFileSync(path.join(root, 'data', 'run', 'update-check.json'), '[]')
+    assert.equal(readUpdateCheck(root), null)
+    // ④ 缺 checkedAt（形状不完整）
+    fs.writeFileSync(path.join(root, 'data', 'run', 'update-check.json'), '{"comparison":"up-to-date"}')
+    assert.equal(readUpdateCheck(root), null)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
 })

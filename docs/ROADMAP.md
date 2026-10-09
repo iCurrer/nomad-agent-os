@@ -309,9 +309,13 @@ Launcher 自举 `nomad` profile 已被真实 DSH 加载；`web` 是**内置保�
 
 ### 3.6 面板整合（把 3.1–3.5 的能力变成看得见的）
 
-- [ ] 状态端点扩展：profile 数/当前 profile、skill 数、存储用量摘要、可更新提示
-- [ ] 面板新增区块渲染上述数据（沿用 5-B 只读端点通道，低频轮询，ADR-0030）
+- [x] 状态端点扩展：profiles 段（数量/默认 profile/逐项有效性）、permissions 段（档位摘要/never 条数/问题数）、update 段（回读 `data/run/update-check.json` 检查留档）；skills/data 两段 3.2/3.3 已有，直接复用。**端点零网络**：可更新提示不走轮询路径上的 registry 查询，而是 CLI `nomad update` 检查成功时落盘留档（`saveUpdateCheck` 白名单字段 + checkedAt），端点只回读 —— 与 doctor 30s 缓存同一设计哲学（5s 轮询路径上只允许单文件级 I/O）
+- [x] 面板新增区块渲染：状态区新增 Profile / Permissions / Backup / Update 四行（Skills/Data 行已有）；降级契约不变 —— 段缺失就跳过该行，绝不崩
 - [ ] 真机闭环：U 盘部署 → 全部新命令在盘上实跑 → 面板人眼确认（V1 验收清单同款标准）
+      ⚠️ **2026-10-09 卡点**：E 盘「既有文件」被系统级写保护（写/改名/删除全拒，新建放行；
+      非沙箱进程同样被拒；凌晨 02:50 时仍可写 —— 当日新变化，疑似安全软件/U 盘保护开关）。
+      代码已全量 223/223 绿并提交；等保护解除或由维护者在本机终端手动执行
+      `node tools/deploy-usb.js --target E:\ --app-only --force` 后补真机验收
 
 ### Phase 3 验收总原则
 
