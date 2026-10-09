@@ -295,9 +295,16 @@ function addSkill(options, source) {
       error: `skill add：不接受网络地址（${source}）。\n  本模块不碰网络下载：请先手动 clone 到本地，再 add 本地路径。`,
     }
   }
-  const sourcePath = path.resolve(source)
+  let sourcePath = path.resolve(source)
   if (!fs.existsSync(sourcePath)) {
-    return { ok: false, error: `skill add：源路径不存在：${sourcePath}` }
+    // 相对路径回退：cwd 解析不到时再按 NOMAD_ROOT 解析一次 —— 文档示例
+    // （`nomad skill add docs/examples/skills/hello-nomad`）从任意目录执行都能用。
+    const rootRelative = path.join(options.config.paths.root, source)
+    if (source !== path.resolve(source) && fs.existsSync(rootRelative)) {
+      sourcePath = path.resolve(rootRelative)
+    } else {
+      return { ok: false, error: `skill add：源路径不存在：${sourcePath}（相对路径按当前目录解析，盘内路径可写相对 NOMAD_ROOT 的形式或绝对路径）` }
+    }
   }
 
   const base = skillsDir(options.config)

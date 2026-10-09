@@ -199,6 +199,28 @@ test('addSkill：目录束与扁平文件安装成功，listSkills 立即可见'
   assert.ok(scan.skills.every((s) => s.problems.length === 0))
 })
 
+test('addSkill：相对路径按 NOMAD_ROOT 回退解析（cwd 无关）', () => {
+  const root = makeRoot()
+  const config = makeConfig(root)
+
+  mkdirSync(path.join(root, 'docs', 'examples', 'skills', 'hello-nomad'), { recursive: true })
+  writeFileSync(
+    path.join(root, 'docs', 'examples', 'skills', 'hello-nomad', 'SKILL.md'),
+    '---\nname: hello-nomad\ndescription: 示例\n---\n\n正文\n',
+  )
+
+  // 相对路径（NOMAD_ROOT 视角），当前进程 cwd 是别处 —— 依然能装
+  const r = addSkill({ config }, 'docs/examples/skills/hello-nomad')
+  assert.strictEqual(r.ok, true, `回退解析应成功：${r.error || ''}`)
+  assert.strictEqual(r.name, 'hello-nomad')
+  assert.ok(existsSync(path.join(root, 'data', 'dsh-home', 'skills', 'hello-nomad', 'SKILL.md')))
+
+  // 两边都解析不到 → 报错信息提示两种基准
+  const bad = addSkill({ config }, 'no/such/dir')
+  assert.strictEqual(bad.ok, false)
+  assert.match(bad.error, /源路径不存在/)
+})
+
 test('addSkill：已存在拒绝 / 网络地址拒绝 / 非法形态拒绝 / 会被 DSH 忽略的拒绝', () => {
   const root = makeRoot()
   const config = makeConfig(root)
