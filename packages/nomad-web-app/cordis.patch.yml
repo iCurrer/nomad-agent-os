@@ -125,6 +125,18 @@
         - id: nomad-theme
           name: ../nomad-theme/lib/host.js
 
+        # ── Nomad 语言包（发布打磨 2026-10-09）───────────────────────────────────
+        # 走上游 locale 服务的正规扩展点（非类型化 register + addLanguage，fallback 链
+        # zh-nomad → zh → en）：把 conversation hero 的上游品牌 slogan「探索未至之境」
+        # 与「预览版」徽章替换为 Nomad 口径（便携智能体操作系统 / 开发预览）。
+        # 纯增量：不占槽、不禁用任何上游行；只在活跃语言为 zh 时一次性迁移切换。
+        #
+        # 解析基准同上：相对名解在声明本补丁的包目录下 ⇒ `../nomad-locale/lib/host.js`。
+        # 失败模式（可判伪）：解析不到时 preflight 打
+        #   `dsh: disabling profile plugin row "nomad-locale": …` —— 由真实冒烟的「零告警」闸捕获。
+        - id: nomad-locale
+          name: ../nomad-locale/lib/host.js
+
 # ── 4) 让出侧栏品牌槽：禁用官方品牌占用者 ──────────────────────────────────────
 # 没有这一步，上面那个 `nomad-brand` 插件就是个哑弹（实测：挂上了、进了启动图，
 # 但注册被 `duplicate declaration` 拒绝，界面毫无变化）。

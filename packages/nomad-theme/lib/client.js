@@ -81,6 +81,18 @@ window.__ModuleLoader__.load({
 		"--dsw-specific-sidebar-nav-item-hover": "#E5D8CD",
 		"--dsw-specific-sidebar-nav-item-active": "#E0CFC0",
 		"--dsw-specific-sidebar-nav-item-active-accent": "#C99F8A",
+		// ── 选中/激活面家族（2026-10-09 发布打磨：修「选中后纯白」与米白主题打架）──
+		// 上游浅色默认：layer-3 / code-segment-selected = 纯白 #fff，multi-select /
+		// selector / tip = #f5f6f7 近白，ghost-active-fill = #ebeef2 —— 在米白底上
+		// 全部呈「死白块」。统一换成暖色梯度（与 layer-2 / nav-item-active 同族）。
+		"--dsw-alias-bg-layer-3": "#F0E7DF",
+		"--dsw-alias-bg-multi-select": "#EAE0D6",
+		"--dsw-alias-markdown-code-segment-selected": "#F0E7DF",
+		"--dsw-specific-selector": "#EAE0D6",
+		"--dsw-specific-tip": "#EAE0D6",
+		"--dsw-alias-button-ghost-active-fill": "#E0CFC0",
+		// 文档多选高亮：上游是蓝 40% 混透明（DeepSeek 蓝），换成品牌裸肤棕同强度。
+		"--dsw-alias-bg-document-selection": "color-mix(in srgb, #C99F8A 40%, transparent)",
 	};
 
 		/**
@@ -112,6 +124,14 @@ window.__ModuleLoader__.load({
 		"--dsw-specific-sidebar-nav-item-hover": "var(--dsw-static-neutral-bluish-75)",
 		"--dsw-specific-sidebar-nav-item-active": "var(--dsw-static-neutral-bluish-100)",
 		"--dsw-specific-sidebar-nav-item-active-accent": "var(--dsw-static-deepseek-100)",
+		// 选中/激活面家族暗色：同样刻意保持 DSH 默认（来源 = 上游暗色段的解析引用）。
+		"--dsw-alias-bg-layer-3": "var(--dsw-static-neutral-bluish-800)",
+		"--dsw-alias-bg-multi-select": "var(--dsw-static-neutral-850)",
+		"--dsw-alias-markdown-code-segment-selected": "var(--dsw-static-neutral-bluish-800)",
+		"--dsw-specific-selector": "var(--dsw-static-neutral-bluish-800)",
+		"--dsw-specific-tip": "var(--dsw-static-neutral-bluish-800)",
+		"--dsw-alias-button-ghost-active-fill": "var(--dsw-static-neutral-bluish-750)",
+		"--dsw-alias-bg-document-selection": "color-mix(in srgb, var(--dsw-static-blue-500) 40%, transparent)",
 	};
 
 		/**
@@ -127,12 +147,34 @@ window.__ModuleLoader__.load({
 		const inject = ["theme"];
 
 		/**
-		 * 挂载：堆叠一层 Nomad 换肤覆盖。
+		 * 隐藏 conversation hero 的上游鲸鱼（DeepSeek 吉祥物）。
+		 *
+		 * 为什么走 CSS 而不是 token：这是「隐藏一个具体元素」，不是颜色 token，
+		 * overrideTokens 通道管不到 display。这是 ADR-0031「禁注 <style>」的**已登记例外**：
+		 * 该结论针对 token 变量（会被 ThemePresenter 内联样式打回），对普通选择器规则无效。
+		 *
+		 * class 来源：`dsh-client-ui-conversation` dist 内 CSS Modules 编译产物
+		 * （HeroShell_module_css_default.fish / .fishHitbox = "pXSMma_*"，2026-10-09 实证）。
+		 * ⚠️ DSH 升级若重编译，hash 可能变化 → 本规则静默失效（退化为"鲸鱼重新出现"，
+		 * 不影响功能）。用 `[class*="_fish"]` 子串匹配做 resilience：同时命中 fish 与
+		 * fishHitbox，且 hash 变了也能跟上（`_fish` 后缀来自源码属性名，比 hash 稳定）。
+		 */
+		const HIDE_UPSTREAM_FISH_CSS = '[class*="_fish"],[class*="_fishHitbox"]{display:none!important}';
+
+		/**
+		 * 挂载：堆叠一层 Nomad 换肤覆盖 + 注入上游吉祥物隐藏规则。
 		 * @param ctx - 客户端根上下文（`ctx.theme` 由 `inject` 声明保证可用）。
 		 */
 		function apply(ctx) {
 			// 覆盖源 = 本包 id（README：动态包传自己的包 id，兼作 inspection 的 origin）。
 			ctx.theme.overrideTokens("@nomad/dsh-client-theme", TOKENS);
+			// 鲸鱼隐藏（幂等：以 style id 为锚，重复 apply 不会叠多条）。
+			if (typeof document !== "undefined" && document.getElementById("nomad-theme-hide-fish") === null) {
+				const style = document.createElement("style");
+				style.id = "nomad-theme-hide-fish";
+				style.textContent = HIDE_UPSTREAM_FISH_CSS;
+				document.head.appendChild(style);
+			}
 		}
 
 		exports.apply = apply;

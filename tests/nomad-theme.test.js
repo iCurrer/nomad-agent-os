@@ -71,8 +71,16 @@ test('token 键名 = 9 个 alias 清单 + 4 个侧边栏 specific 覆盖集', ()
     '--dsw-specific-sidebar-nav-item-hover',
     '--dsw-specific-sidebar-nav-item-active',
     '--dsw-specific-sidebar-nav-item-active-accent',
+    // 选中/激活面家族（2026-10-09 发布打磨：修「选中后纯白」与米白主题打架）
+    '--dsw-alias-bg-layer-3',
+    '--dsw-alias-bg-multi-select',
+    '--dsw-alias-markdown-code-segment-selected',
+    '--dsw-specific-selector',
+    '--dsw-specific-tip',
+    '--dsw-alias-button-ghost-active-fill',
+    '--dsw-alias-bg-document-selection',
   ]
-  assert.deepEqual(names.sort(), official.sort(), 'token 键名必须是 9 alias + 4 侧栏 specific 的覆盖集（写错键名 = override 静默失效）')
+  assert.deepEqual(names.sort(), official.sort(), 'token 键名必须是 9 alias + 4 侧栏 specific + 7 选中面的覆盖集（写错键名 = override 静默失效）')
 })
 
 test('light/dark 双值齐全，且每项都是 { light, dark } 字符串对', () => {
@@ -104,6 +112,14 @@ test('浅色 = 维护者定的暖米白大地色系（9 个色值逐字锚定）
     '--dsw-specific-sidebar-nav-item-hover': '#E5D8CD',
     '--dsw-specific-sidebar-nav-item-active': '#E0CFC0',
     '--dsw-specific-sidebar-nav-item-active-accent': '#C99F8A',
+    // 选中/激活面家族浅色 = 暖色梯度（与 layer-2 / nav-item-active 同族）
+    '--dsw-alias-bg-layer-3': '#F0E7DF',
+    '--dsw-alias-bg-multi-select': '#EAE0D6',
+    '--dsw-alias-markdown-code-segment-selected': '#F0E7DF',
+    '--dsw-specific-selector': '#EAE0D6',
+    '--dsw-specific-tip': '#EAE0D6',
+    '--dsw-alias-button-ghost-active-fill': '#E0CFC0',
+    '--dsw-alias-bg-document-selection': 'color-mix(in srgb, #C99F8A 40%, transparent)',
   }
   for (const [name, value] of Object.entries(expected)) {
     assert.equal(tokens[name].light, value, `${name} 的浅色值必须是 ${value}`)
@@ -126,6 +142,14 @@ test('暗色 = 保持 DSH 默认（非暖米白，逐字锚定默认暗色值）
     '--dsw-specific-sidebar-nav-item-hover': 'var(--dsw-static-neutral-bluish-75)',
     '--dsw-specific-sidebar-nav-item-active': 'var(--dsw-static-neutral-bluish-100)',
     '--dsw-specific-sidebar-nav-item-active-accent': 'var(--dsw-static-deepseek-100)',
+    // 选中/激活面家族暗色 = 保持 DSH 默认（引用官方 static 变量）
+    '--dsw-alias-bg-layer-3': 'var(--dsw-static-neutral-bluish-800)',
+    '--dsw-alias-bg-multi-select': 'var(--dsw-static-neutral-850)',
+    '--dsw-alias-markdown-code-segment-selected': 'var(--dsw-static-neutral-bluish-800)',
+    '--dsw-specific-selector': 'var(--dsw-static-neutral-bluish-800)',
+    '--dsw-specific-tip': 'var(--dsw-static-neutral-bluish-800)',
+    '--dsw-alias-button-ghost-active-fill': 'var(--dsw-static-neutral-bluish-750)',
+    '--dsw-alias-bg-document-selection': 'color-mix(in srgb, var(--dsw-static-blue-500) 40%, transparent)',
   }
   for (const [name, value] of Object.entries(expected)) {
     assert.equal(tokens[name].dark, value, `${name} 的暗色值必须保持默认 ${value}`)
@@ -140,4 +164,40 @@ test('inject 声明 theme 服务', () => {
 test('宿主半是空 apply（不注册任何服务）', () => {
   const hostSrc = fs.readFileSync(path.join(ROOT, 'packages', 'nomad-theme', 'lib', 'host.js'), 'utf8')
   assert.ok(/export\s+function\s+apply\s*\(\s*\)\s*\{\s*\}/.test(hostSrc), '宿主半必须是空 apply')
+})
+
+// ── 发布打磨（2026-10-09）：隐藏上游鲸鱼吉祥物 ──────────────────────────────────
+// 契约：apply 时向 document.head 注入一条 id 锚定的 style 规则；幂等（重复 apply 不叠加）；
+// 规则用 [class*="_fish"] 子串匹配（hash 变了也能跟上）；无 document 环境（SSR/测试沙箱）跳过。
+
+/** 带最小 document 桩的加载器：捕获注入的 style 元素。 */
+function loadModuleWithDocument() {
+  const injected = []
+  let existing = null
+  const documentStub = {
+    getElementById: (id) => (existing !== null && existing.id === id ? existing : null),
+    createElement: () => ({ id: '', textContent: '' }),
+    head: { appendChild: (el) => { existing = el; injected.push(el) } },
+  }
+  let envelope
+  const windowObject = { __ModuleLoader__: { load: (spec) => { envelope = spec } } }
+  const sandbox = { window: windowObject, document: documentStub }
+  vm.createContext(sandbox)
+  vm.runInContext(fs.readFileSync(CLIENT_PATH, 'utf8'), sandbox, { filename: 'nomad-theme/client.js' })
+  assert.ok(envelope !== undefined, 'client.js 没有调用 window.__ModuleLoader__.load')
+  const module = envelope.factory(() => { throw new Error('unexpected require') })
+  const ctx = { theme: { overrideTokens: () => {} } }
+  return { module, ctx, injected }
+}
+
+test('发布打磨：注入上游鲸鱼隐藏规则，幂等不叠加', () => {
+  const { module, ctx, injected } = loadModuleWithDocument()
+  module.apply(ctx)
+  assert.equal(injected.length, 1, '首次 apply 恰好注入一条 style')
+  assert.equal(injected[0].id, 'nomad-theme-hide-fish')
+  assert.ok(injected[0].textContent.includes('[class*="_fish"]'), '规则用 _fish 子串匹配（hash 弹性）')
+  assert.ok(injected[0].textContent.includes('display:none'), '必须隐藏元素')
+  // 幂等：getElementById 已命中（existing 有 id），再次 apply 不叠加
+  module.apply(ctx)
+  assert.equal(injected.length, 1, '重复 apply 不得叠加第二条 style')
 })
