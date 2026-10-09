@@ -26,6 +26,7 @@ const path = require('node:path')
 const { runDoctor } = require('./doctor.js')
 const { readState } = require('./state.js')
 const { dataSummary } = require('./dataman.js')
+const { lastBackupInfo } = require('./backup.js')
 const { listSkills } = require('./skills.js')
 
 /** 状态端点返回的 state 字段白名单（其余一律丢弃，尤其带 token 的 `url`）。 */
@@ -121,7 +122,11 @@ function buildSkillsSummary(config) {
  * @returns {{ tmpBytes: number, tmpFiles: number, human: string }} 摘要
  */
 function buildDataSummary(config) {
-  return dataSummary({ config })
+  return {
+    ...dataSummary({ config }),
+    // 3.5 备份提示数据面：面板可据此显示「上次备份 N 天前」（渲染归 3.6）。
+    lastBackup: lastBackupInfo(config),
+  }
 }
 
 /**

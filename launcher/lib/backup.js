@@ -177,6 +177,27 @@ function restoreBackup(root, config, backupDir) {
   return { restored, items: manifest.items.length }
 }
 
+/**
+ * 查询最近一次备份的年龄（3.5 备份提示用；只读，不触发备份）。
+ * @param {object} config - 已加载配置（用 paths.backups）
+ * @returns {{ last: string|null, ageDays: number|null }} 最近备份的 ISO 时间与距今天数；从未备份过则均为 null
+ */
+function lastBackupInfo(config) {
+  const dir = config.paths.backups
+  let newest = null
+  try {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !entry.name.startsWith('nomad-backup-')) continue
+      const stat = fs.statSync(path.join(dir, entry.name))
+      if (newest === null || stat.mtimeMs > newest.mtimeMs) newest = stat
+    }
+  } catch {
+    return { last: null, ageDays: null }
+  }
+  if (newest === null) return { last: null, ageDays: null }
+  return { last: new Date(newest.mtimeMs).toISOString(), ageDays: Math.floor((Date.now() - newest.mtimeMs) / 86400000) }
+}
+
 module.exports = {
   EXCLUDE_DIRS,
   copyTree,
@@ -184,4 +205,5 @@ module.exports = {
   resolveSources,
   createBackup,
   restoreBackup,
+  lastBackupInfo,
 }

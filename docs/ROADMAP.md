@@ -288,12 +288,24 @@ Launcher 自举 `nomad` profile 已被真实 DSH 加载；`web` 是**内置保�
 
 现状：`rollback`（列表/切换/校验）与 `backup`/`restore` 已在 V1 落地。
 
-- [ ] `nomad update --check` —— 只读查询 npm registry 上游 `@deepseek-ai/dsh` 最新版本，
+- [x] `nomad update --check` —— 只读查询 npm registry 上游 `@deepseek-ai/dsh` 最新版本，
       与盘内 `current` 对比（不自动升级 —— 铁律：升级必须维护者手动触发）
-- [ ] `nomad update` —— 下载新版到 `runtime/dsh/<version>/`（SHA-256 校验沿打包流水线），
+      —— **（2026-10-09 完成**：`launcher/lib/updater.js`，自带 semver 比较器（含 prerelease
+      规则）；真机实测：registry 最新 0.2.0-rc.2 < 盘内 0.2.1-alpha.1 → 判「盘内更新，不动作」）
+- [x] `nomad update` —— 下载新版到 `runtime/dsh/<version>/`（SHA-256 校验沿打包流水线），
       **完成后指向新版的仍是 current 指针改写**，旧版本目录保留 → 回滚天然可用
-- [ ] 备份自动化（可选）：start 时检查上次备份距今天数，超阈值在 `status` 提示（不自动执行）
-- [ ] 单测（registry 查询用注入的 fetch 替身，测试不碰网络）
+      —— **（2026-10-09 完成**：校验锚点用 registry `dist.integrity`（sha512 SSRI，强于
+      SHA-256，不匹配绝不落盘）；链路 = 下载 → 校验 → 系统 tar 解包拍平 → 盘内 npm-cli
+      `install --omit=dev` 重建依赖树 → `buildNextManifest` 改指针（入口真实存在才写）；
+      **实际升级必须 `--yes`**，运行实例存活时改指针必须 `--force`（与 rollback 同姿态）；
+      版本目录已存在不覆盖）
+- [x] 备份自动化（可选）：start 时检查上次备份距今天数，超阈值在 `status` 提示（不自动执行）
+      —— **（2026-10-09 完成**：`lastBackupInfo`（30 天阈值 `BACKUP_HINT_DAYS`），start 输出
+      备份提示行；/status data 段带 `lastBackup`（面板渲染归 3.6））
+- [x] 单测（registry 查询用注入的 fetch 替身，测试不碰网络）—— **（tests/updater.test.js
+      11 例**：semver 比较 / fetch 替身四种判定 / 完整性校验与拒落盘 / 真实 tgz 夹具解包拍平 /
+      npm argv 形状与 spawn 注入 / 指针改写守卫；**依赖安装的 spawn 全部异步**——沙箱杀
+      spawnSync 的记忆教训再次生效）
 
 ### 3.6 面板整合（把 3.1–3.5 的能力变成看得见的）
 

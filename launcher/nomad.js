@@ -31,6 +31,7 @@
  *   nomad open                 重新用浏览器打开当前实例
  *   nomad version
   nomad rollback [<version>] [--to <version>] [--force]   回滚 DSH 运行时（改写 current 指针）
+  nomad update [--check] [--yes] [--force]                检查/执行 DSH 升级（--yes 才动手，绝不自动）
   nomad backup [--include-config] [--to <dir>]            备份盘内用户数据到 data/backups/
   nomad restore <backup-dir> [--force]                   从备份恢复盘内用户数据
   nomad projects                                         列出已持久化的 DSH 工作区（项目）
@@ -45,7 +46,7 @@ const { detectRoot } = require('./lib/root.js')
 const { loadConfig } = require('./lib/config.js')
 const { discoverRuntime } = require('./lib/runtime.js')
 const { applyRollback, listDshVersions } = require('./lib/runtime-rollback.js')
-const { createBackup, restoreBackup } = require('./lib/backup.js')
+const { createBackup, restoreBackup, lastBackupInfo } = require('./lib/backup.js')
 const { parseWorkspaces } = require('./lib/projects.js')
 const { buildEnv, describePlan } = require('./lib/env.js')
 const { storageReport, clean, humanBytes } = require('./lib/dataman.js')
@@ -74,6 +75,9 @@ const DEFAULT_READY_TIMEOUT_MS = 120000
  */
 const HANDOFF_WAIT_MS = 6000
 
+/** 备份提示阈值（天）：start 时上次备份超过该天数则提示，不自动执行（3.5）。 */
+const BACKUP_HINT_DAYS = 30
+
 const HELP = `Nomad — Portable Agent OS（Launcher ${LAUNCHER_VERSION}）
 
 用法：nomad [命令] [选项]
@@ -100,6 +104,7 @@ const HELP = `Nomad — Portable Agent OS（Launcher ${LAUNCHER_VERSION}）
   open                 用系统浏览器重新打开当前实例
   version              打印版本信息
   rollback              回滚 DSH 运行时版本（改写 current 指针，影响下次启动）
+  update                检查 DSH 新版本（默认 --check 只读；--yes 才实际升级）
   backup               备份盘内用户数据（会话/项目/配置）到 data/backups/
   restore              从备份恢复盘内用户数据
   projects             列出已持久化的 DSH 工作区（项目）
@@ -479,6 +484,15 @@ async function cmdStart(flags) {
   console.log(`  日志   ${ctx.config.paths.logs}`)
   console.log('  提示   浏览器上一页显示 "authentication required" 时，用 `nomad open` 重开（会带上令牌）；')
   console.log('         手动访问用 `nomad url`（打印含令牌的完整地址，敏感勿外传）；停止用 `nomad stop`')
+  // 3.5 备份提示：只提示不自动执行（备份永远由维护者显式触发）。
+  try {
+    const backupInfo = lastBackupInfo(ctx.config)
+    if (backupInfo.last === null) {
+      console.log('  备份   尚未备份过 —— 建议先 `nomad backup` 再开始正式使用（sessions 是唯一事实源）。')
+    } else if (backupInfo.ageDays >= BACKUP_HINT_DAYS) {
+      console.log(`  备份   上次备份已是 ${backupInfo.ageDays} 天前（${backupInfo.last}）—— 建议 \`nomad backup\` 一次。`)
+    }
+  } catch { /* 提示失败不影响启动 */ }
   if (handoff?.state === 'failed') {
     console.log('')
     console.log('  ⚠ 自动打开浏览器未成功，但实例已就绪可正常使用（见上行「浏览器」）。')
@@ -623,6 +637,90 @@ async function cmdStatus(flags) {
  * @param {Record<string, string|boolean>} flags - flag
  * @returns {number} 退出码
  */
+/**
+ * `nomad update` —— 检查更新（--check，只读）与手动升级（--yes）。
+ * 铁律：绝不自动升级 —— 实际升级必须 --yes；运行实例存活时改指针必须 --force。
+ * @param {Record<string, string|boolean>} flags - flag
+ * @returns {Promise<number>} 退出码
+ */
+async function cmdUpdate(flags) {
+  const ctx = resolveContext(flags)
+  const updater = require('./lib/updater.js')
+  const { readCurrentManifest, listDshVersions } = require('./lib/runtime-rollback.js')
+  const pkg = flagValue(flags, ['package']) ?? updater.DEFAULT_PACKAGE_NAME
+
+  // 当前版本（清单指针）
+  let current = '(未知)'
+  let manifest = null
+  try {
+    const m = readCurrentManifest(ctx.root, ctx.config)
+    current = m.manifest.version ?? '(未知)'
+    manifest = m.manifest
+  } catch (error) {
+    console.error(`update: 读取 current 指针失败：${error instanceof Error ? error.message : String(error)}`)
+    return 1
+  }
+
+  console.log(`正在查询 npm registry（${pkg}）……`)
+  const check = await updater.checkUpdate({ current, packageName: pkg })
+
+  if (check.comparison === 'unknown') {
+    console.error(`查询失败：${check.error ?? '网络不可达'}`)
+    console.error('  --check 只读无害；查询需要能访问 npm registry（如走代理请先配好代理环境）。')
+    return 1
+  }
+
+  console.log(`盘内当前      ${current}`)
+  console.log(`registry 最新 ${check.latest}`)
+  const available = listDshVersions(ctx.root, ctx.config)
+  console.log(`盘内已装      ${available.join(', ') || '(仅当前)'}`)
+
+  if (check.comparison === 'up-to-date') console.log('结论：已是最新版本。')
+  else if (check.comparison === 'current-newer') console.log('结论：盘内版本比 registry 最新还新（alpha/内部版），不动作。')
+  else {
+    console.log(`结论：可更新（${current} → ${check.latest}）。`)
+    console.log(`  升级：nomad update --yes   （下载 → 校验 → 解包 → 装依赖 → 改指针；旧版本保留可 rollback）`)
+  }
+  if (flagBool(flags, ['check'])) return 0
+
+  if (flags.yes !== true) {
+    console.error('')
+    console.error('实际升级被拒绝：缺少 --yes（铁律：升级必须维护者手动触发，绝不自动）。')
+    return 1
+  }
+  if (check.updateAvailable !== true) {
+    console.error('无需升级（当前 >= registry 最新）。')
+    return 0
+  }
+
+  const state = readState(ctx.root)
+  const alive = state !== null && (isAlive(Number(state.supervisorPid)) || isAlive(Number(state.dshPid)))
+  let result
+  try {
+    result = await updater.applyUpdate({
+      root: ctx.root,
+      config: ctx.config,
+      currentManifest: manifest,
+      nodeExe: ctx.runtime.node.path,
+      version: check.latest,
+      tarball: check.tarball,
+      integrity: check.integrity,
+      instanceAlive: alive,
+      force: flagBool(flags, ['force']),
+      onLine: (line) => { if (line !== '') console.log(`  npm: ${line}`) },
+    })
+  } catch (error) {
+    console.error(`升级失败：${error instanceof Error ? error.message : String(error)}`)
+    return 1
+  }
+  console.log(`已升级 DSH 运行时：${current} → ${result.version}`)
+  console.log(`  版本目录 ${result.versionDir}（依赖树已重建）`)
+  console.log(`  指针文件 ${result.pointerFile}`)
+  console.log('  旧版本目录已保留：nomad rollback <旧版本> 可随时回退（回滚只影响下次启动）。')
+  console.log('  请执行 nomad start 以新版本启动。')
+  return 0
+}
+
 function cmdRollback(flags, positionals) {
   const ctx = resolveContext(flags)
   const target = flagValue(flags, 'to') ?? positionals[1]
@@ -786,6 +884,9 @@ async function main() {
     }
     case 'rollback':
       code = cmdRollback(flags, positionals)
+      break
+    case 'update':
+      code = await cmdUpdate(flags)
       break
     case 'backup':
       code = cmdBackup(flags)
