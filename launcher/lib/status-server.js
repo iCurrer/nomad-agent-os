@@ -125,15 +125,31 @@ function buildDataSummary(config) {
 }
 
 /**
+ * doctor 结果缓存：健康度不必每次请求全量现算。
+ *
+ * 为什么（2026-10-09 真机反馈）：面板每 5s 轮询一次 /status，而 doctor 20 项里
+ * 「运行时包完整性」要逐一核对 533 个包 —— 在 U 盘 exFAT 上单次就要数秒，轮询
+ * 请求堆积、响应忽快忽慢，面板在「骨架 ↔ 数据」之间来回翻页（用户感知为闪屏）。
+ * 缓存 TTL 30s：体感仍是「低频刷新的健康度」，但 U 盘 I/O 从每 5s 一次全量
+ * 降到每 30s 一次；state/identity/skills/data 等轻量段仍然每次现算（真实新鲜）。
+ */
+const DOCTOR_CACHE_MS = 30 * 1000
+let doctorCache = null // { at: number, doctor: object }
+
+/**
  * 组装一次完整状态 JSON（身份 + 运行态 + 健康度 + Skills + 数据面，五类合一）。
  *
- * 健康度每次请求现算（runDoctor 本就是「每次调用现算」），天然适配面板低频刷新。
+ * 健康度走 30s 缓存（见 DOCTOR_CACHE_MS 注释）；其余轻量段每次现算。
  * @param {{ root: string, source: string, config: object, runtime: object }} options - 上下文
  * @returns {Promise<object>} 状态对象
  */
 async function collectStatus(options) {
   const { root, source, config, runtime } = options
-  const doctor = await runDoctor({ root, source, config, runtime })
+  const now = Date.now()
+  if (doctorCache === null || now - doctorCache.at >= DOCTOR_CACHE_MS) {
+    const doctor = await runDoctor({ root, source, config, runtime })
+    doctorCache = { at: now, doctor }
+  }
   return {
     ok: true,
     generatedAt: new Date().toISOString(),
@@ -142,8 +158,9 @@ async function collectStatus(options) {
     skills: buildSkillsSummary(config),
     data: buildDataSummary(config),
     health: {
-      summary: doctor.summary,
-      results: doctor.results,
+      summary: doctorCache.doctor.summary,
+      results: doctorCache.doctor.results,
+      cachedForMs: Math.max(0, DOCTOR_CACHE_MS - (now - doctorCache.at)),
     },
   }
 }

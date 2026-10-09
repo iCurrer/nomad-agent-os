@@ -103,13 +103,15 @@ window.__ModuleLoader__.load({
 		const STATUS_ENDPOINT = "http://127.0.0.1:3090/status";
 
 		/**
-		 * 低频轮询只读状态端点，返回 { data, error, loading }。
-		 * 用 React 的 useState/useEffect（面板已 require react）；轮询间隔 5s，
-		 * 失败静默降级（保留上一次成功数据，或置 error），绝不让面板因端点缺席而崩。
-		 * @returns {{ data: object|null, error: string|null }} 状态快照
+		 * 低频轮询只读状态端点，返回 { data, error, stale }。
+		 * 用 React 的 useState/useEffect（面板已 require react）；轮询间隔 5s。
+		 * **失败不清空上次数据**（2026-10-09 真机反馈：U 盘慢时请求偶发超时，
+		 * 清空会让面板在「骨架 ↔ 数据」之间来回翻页，用户感知为闪屏）——
+		 * 只记录 error 供降级提示，数据保留上一次成功值（stale 标注陈旧）。
+		 * @returns {{ data: object|null, error: string|null, stale: boolean }} 状态快照
 		 */
 		function useStatus() {
-			const [snapshot, setSnapshot] = React.useState({ data: null, error: null });
+			const [snapshot, setSnapshot] = React.useState({ data: null, error: null, stale: false });
 			React.useEffect(() => {
 				let cancelled = false;
 				let timer = null;
@@ -118,10 +120,16 @@ window.__ModuleLoader__.load({
 						const res = await fetch(STATUS_ENDPOINT, { cache: "no-store" });
 						if (!res.ok) throw new Error("HTTP " + res.status);
 						const data = await res.json();
-						if (!cancelled) setSnapshot({ data: data, error: null });
+						if (!cancelled) setSnapshot({ data: data, error: null, stale: false });
 					} catch (error) {
+						// 只在「还没有任何成功数据」时才塌到骨架；有数据就保留并标注陈旧。
 						if (!cancelled) {
-							setSnapshot({ data: null, error: error instanceof Error ? error.message : String(error) });
+							setSnapshot(function (prev) {
+								if (prev && prev.data !== null && prev.data !== undefined) {
+									return { data: prev.data, error: error instanceof Error ? error.message : String(error), stale: true };
+								}
+								return { data: null, error: error instanceof Error ? error.message : String(error), stale: false };
+							});
 						}
 					}
 				};
@@ -292,6 +300,8 @@ window.__ModuleLoader__.load({
 				const id = data.identity || {};
 				const st = data.state || {};
 				const health = data.health || {};
+				const staleNote = status && status.stale
+					? `（数据陈旧：${status.error}）` : "";
 				const summary = health.summary || {};
 				const rows = [
 					row("Nomad", id.NOMAD_VERSION || "—"),
@@ -325,7 +335,7 @@ window.__ModuleLoader__.load({
 				if (data.data !== undefined && data.data !== null) {
 					rows.push(row("Data", `可清理 ${data.data.human ?? "—"} / ${data.data.tmpFiles ?? 0} 文件`));
 				}
-				rows.push(row("Build", buildId === undefined ? "—" : buildId));
+				rows.push(row("Build", (buildId === undefined ? "—" : buildId) + staleNote));
 				return rows;
 			};
 
