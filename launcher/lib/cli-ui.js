@@ -185,6 +185,42 @@ function kv(key, value, keyWidth = 12) {
  */
 const tone = { ok: green, fail: red, warn: yellow, mute: gray, accent: cyan }
 
+/**
+ * NOMAD 块字艺术（ANSI Shadow 风格手绘，5 行 × 46 列，含行尾空格补齐）。
+ * 每行字符数严格一致：右列信息的起始列在等宽字体下天然对齐，
+ * 即使终端把制表符渲染成宽字符，五行也会整体平移、不破坏对齐。
+ */
+const BANNER_ROWS = [
+  '██╗   ██╗ ██████╗ ███╗   ███╗ █████╗  ██████╗ ',
+  '╚██╗ ██╔╝██╔═══██╗████╗ ████║██╔══██╗██╔════╝ ',
+  ' ╚████╔╝ ██║   ██║██╔████╔██║███████║██║  ███╗',
+  '  ╚██╔╝  ██║   ██║██║╚██╔╝██║██╔══██║██║   ██║',
+  '   ╚═╝   ╚██████╔╝██║ ╚═╝ ██║██║  ██║╚██████╔╝',
+]
+
+/**
+ * 启动横幅：NOMAD 大字（左）+ 信息列（右，最多 5 行）。
+ * 大字青色加粗；颜色关闭时保留纯字符画（横幅本身就是视觉，不依赖颜色）。
+ * @param {string[]} [infoLines=[]] - 右侧信息行（多余 5 行截断，不足留空）
+ * @param {object} [options={}] - 选项
+ * @param {string} [options.tagline] - 底部标语行（横幅下方，置灰居左）
+ * @returns {string} 多行横幅文本
+ */
+function banner(infoLines = [], options = {}) {
+  const rows = []
+  const paint = colorEnabled() ? (s) => style(s, 1, 36) : (s) => s
+  for (let i = 0; i < BANNER_ROWS.length; i++) {
+    const art = BANNER_ROWS[i]
+    const info = String(infoLines[i] ?? '')
+    rows.push(`${paint(art, i === 0)}  ${i === 0 ? bold(info) : info}`)
+  }
+  if (options.tagline !== undefined) {
+    rows.push('')
+    rows.push(options.tagline)
+  }
+  return rows.join('\n')
+}
+
 module.exports = {
   setColorMode,
   colorEnabled,
@@ -205,4 +241,6 @@ module.exports = {
   title,
   kv,
   tone,
+  banner,
+  BANNER_ROWS,
 }

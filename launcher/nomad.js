@@ -486,7 +486,13 @@ async function cmdStart(flags) {
   const state = await waitForHandoff(ctx.root, child.pid, openBrowser ? HANDOFF_WAIT_MS : 0) ?? ready.state
   const handoff = state.browserHandoff
   console.log('')
-  console.log(`${g.brand} ${ui.tone.ok(ui.bold('Nomad 已就绪'))}`)
+  console.log(ui.banner([
+    'Portable Agent OS',
+    `Nomad ${readNomadVersion(ctx.root)}`,
+    `Launcher ${LAUNCHER_VERSION}`,
+    `DSH ${String(state.runtime?.version ?? '未知')}`,
+    `Node ${process.versions.node}`,
+  ], { tagline: `${g.ok} ${ui.bold('已就绪')}  ${ui.dim(new Date().toISOString())}` }))
   console.log(`  ${ui.kv('地址', ui.dim(state.publicUrl ?? sanitizeUrl(state.url)))}`)
   console.log(`  ${ui.kv('端口', `${String(state.port)}${ctx.config.web.port === 0 ? ui.dim('（由 OS 协商，非写死）') : ''}`)}`)
   console.log(`  ${ui.kv('浏览器', describeHandoff(handoff))}`)
@@ -1315,13 +1321,13 @@ async function main() {
     }
     case 'version': {
       const { root } = detectRoot({ explicit: flagValue(flags, 'root') })
-      const g = ui.glyphs()
-      console.log(`${g.brand} ${ui.bold('Nomad')} ${ui.dim('— Portable Agent OS')}`)
-      console.log(`  ${ui.kv('Nomad', ui.bold(readNomadVersion(root)))}`)
-      console.log(`  ${ui.kv('Launcher', LAUNCHER_VERSION)}`)
-      console.log(`  ${ui.kv('Node', `${process.versions.node} ${ui.dim(`（${process.execPath}）`)}`)}`)
-      console.log(`  ${ui.kv('Platform', `${process.platform} ${process.arch}`)}`)
-      console.log(`  ${ui.kv('今天', ui.dim(localDate()))}`)
+      console.log(ui.banner([
+        'Portable Agent OS',
+        `Nomad ${readNomadVersion(root)}`,
+        `Launcher ${LAUNCHER_VERSION}`,
+        `Node ${process.versions.node}`,
+        `${process.platform} ${process.arch} · ${localDate()}`,
+      ], { tagline: ui.dim(`✦ ${process.execPath}`) }))
       break
     }
     case 'help':
